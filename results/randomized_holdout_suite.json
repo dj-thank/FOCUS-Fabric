@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "source_artifacts": [
+    "results/holdout_selftest.json",
+    "results/holdout_314159.json",
+    "results/holdout_271828.json"
+  ],
+  "seeds": [
+    17072026,
+    314159,
+    271828
+  ],
+  "runs": 3,
+  "total_cases": 11,
+  "pass_rate": 1.0,
+  "weighted_mean_fabric_nmse": 4.022595079401402e-05,
+  "weighted_mean_best_single_family_nmse": 0.011236412143758074,
+  "weighted_fabric_to_baseline_ratio": 0.0035799639848881734,
+  "worst_run_fabric_to_baseline_ratio": 0.098802554956204,
+  "max_fallback_abs_error": 0.0,
+  "invalid_outputs": 0,
+  "weighted_mean_active_ratio": 0.1620549959825528,
+  "all_passed": true,
+  "runs_detail": [
+    {
+      "seed": 17072026,
+      "cases": 3,
+      "mean_fabric_nmse": 3.1504659394461974e-05,
+      "mean_best_single_family_nmse": 0.0003532669118915995,
+      "relative_nmse": 0.0891808950511879,
+      "max_fallback_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "passed": true
+    },
+    {
+      "seed": 314159,
+      "cases": 4,
+      "mean_fabric_nmse": 3.43519352554722e-05,
+      "mean_best_single_family_nmse": 0.03010239400464343,
+      "relative_nmse": 0.0011411695445276964,
+      "max_fallback_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "passed": true
+    },
+    {
+      "seed": 271828,
+      "cases": 4,
+      "mean_fabric_nmse": 5.264093488221988e-05,
+      "mean_best_single_family_nmse": 0.000532789206772577,
+      "relative_nmse": 0.098802554956204,
+      "max_fallback_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "passed": true
+    }
+  ],
+  "scope_note": "Controlled randomized attention fields only; not a language-model or official benchmark result."
+}

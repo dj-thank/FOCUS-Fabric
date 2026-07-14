@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "hypotheses": [
+    {
+      "id": "H001-forward-influence-routing",
+      "status": "pending",
+      "title": "Forward-influence and uncertainty jointly outperform retrospective attention scores for residual retention",
+      "rationale": "High past attention is not equivalent to future accessibility. Preserve tokens with high counterfactual output influence or predictive uncertainty.",
+      "controls": ["operator-only", "weighted KV coreset", "attention-mass-only residual selection"],
+      "primary_metric": "synthetic.in_distribution.output_nmse",
+      "disconfirming_condition": "No >=5% objective improvement at matched active bytes, or any token-agreement regression.",
+      "allowed_files": ["src/focus_fabric/codecs.py", "src/focus_fabric/controller.py", "tests/", "results/"]
+    },
+    {
+      "id": "H002-sleep-consolidation",
+      "status": "pending",
+      "title": "Offline consolidation into fast weights can reduce active archive traffic without policy-memory loss",
+      "rationale": "Separate online exact recoverability from scheduled consolidation; immutable semantic records must remain externally auditable.",
+      "controls": ["exact cold archive", "binary page hierarchy"],
+      "primary_metric": "archive_bytes_read_per_verified_token",
+      "disconfirming_condition": "Any governance-memory erasure, provenance break, or exact sequence mismatch.",
+      "allowed_files": ["src/focus_fabric/agent_memory.py", "src/focus_fabric/training.py", "tests/", "results/"]
+    },
+    {
+      "id": "H003-conformal-drift-sentinels",
+      "status": "pending",
+      "title": "Sparse exact sentinel audits can detect exchangeability failure before routing safety collapses",
+      "rationale": "Split-conformal coverage is marginal and can fail under shift. Online audit residuals should trigger page recompilation or stricter fallback.",
+      "controls": ["static certificate", "support-radius-only OOD gate"],
+      "primary_metric": "shifted_false_accept_rate",
+      "disconfirming_condition": "No reduction in false accepts at equal or lower exact-audit traffic.",
+      "allowed_files": ["src/focus_fabric/certificate.py", "src/focus_fabric/fabric.py", "tests/", "results/"]
+    },
+    {
+      "id": "H004-layer-budget-cooptimization",
+      "status": "pending",
+      "title": "Layer/head/page rate allocation beats independent local budgets under a global HBM constraint",
+      "rationale": "Sensitivity and semantic retrieval specialization vary by layer and head; local ratios waste budget.",
+      "controls": ["uniform ratio", "independent per-head objective"],
+      "primary_metric": "global_rate_distortion_objective",
+      "disconfirming_condition": "No improvement on held-out traces, or allocation becomes unstable across seeds.",
+      "allowed_files": ["src/focus_fabric/controller.py", "src/focus_fabric/integration.py", "tests/", "results/"]
+    }
+  ]
+}

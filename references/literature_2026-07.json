@@ -1,0 +1,236 @@
+{
+  "as_of": "2026-07-14",
+  "scope": "Primary papers and foundational cross-domain concepts that directly shaped FOCUS-Fabric 2026.07.",
+  "entries": [
+    {
+      "id": "compresskv-2606.24467",
+      "title": "CompressKV: Semantic-Retrieval-Guided KV-Cache Compression for Resource-Efficient Long-Context LLM Inference",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2606.24467",
+      "domain": "KV cache / head specialization",
+      "insight": "Semantic retrieval heads and non-uniform layer budgets matter.",
+      "adoption": "Per-head/per-page codec selection; global layer budget remains a registered hypothesis.",
+      "caveat": "Author-reported benchmark results are not reproduced here."
+    },
+    {
+      "id": "polykv-2606.15157",
+      "title": "PolyKV: Heterogeneous Retention and Allocation for KV Cache Compression",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2606.15157",
+      "domain": "heterogeneous cache policy",
+      "insight": "Different layers benefit from different policies and budgets.",
+      "adoption": "FOCUS-Fabric generalizes heterogeneity to representation families at page/head granularity.",
+      "caveat": "No direct reproduction in this CPU release."
+    },
+    {
+      "id": "physics-kv-2603.01426",
+      "title": "Understanding the Physics of Key-Value Cache Compression for LLMs through Attention Dynamics",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2603.01426",
+      "domain": "routing dynamics / safety",
+      "insight": "Retention, semantic accessibility, and utilization differ; extreme compression can create a routing safety cliff.",
+      "adoption": "Exact verifier, routing/log-mass metrics, distribution-shift benchmark, and no universal compression claim.",
+      "caveat": "The reported cliff is model/task dependent."
+    },
+    {
+      "id": "infokv-2606.26875",
+      "title": "Information-Aware KV Cache Compression for Long Reasoning",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2606.26875",
+      "domain": "information theory / long reasoning",
+      "insight": "Predictive uncertainty and forward influence complement attention salience.",
+      "adoption": "Hybrid residual scoring includes forward-impact proxies; future global controller hypothesis uses uncertainty budgets.",
+      "caveat": "The public proxy is simpler than InfoKV's full learned setting."
+    },
+    {
+      "id": "attention-matching-2602.16284",
+      "title": "Fast KV Compaction via Attention Matching",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2602.16284",
+      "domain": "numerical optimization",
+      "insight": "Compact state should preserve attention outputs and attention mass, not only tokens.",
+      "adoption": "Every codec predicts both output and log-normalizer; selection and claims report both.",
+      "caveat": "FOCUS-Fabric does not implement the paper's complete optimization family."
+    },
+    {
+      "id": "nectar-2605.09778",
+      "title": "Nectar: Neural Estimation of Cached-Token Attention via Regression",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2605.09778",
+      "domain": "function approximation",
+      "insight": "Fixed-context attention is a query-to-output/log-normalizer function.",
+      "adoption": "Legacy FOCUS operator retained as one analytic local function codec.",
+      "caveat": "Nectar trains neural regressors; this release uses analytic/local and moment-based candidates."
+    },
+    {
+      "id": "kv-direct-2603.19664",
+      "title": "The Residual Stream Is All You Need: On the Redundancy of the KV Cache in Transformer Inference",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2603.19664",
+      "domain": "exact state reconstruction",
+      "insight": "Residual streams can be an exact source for regenerating K/V in conventional decoder layers.",
+      "adoption": "Architecture reserves an exact-regeneration backend and refuses to conflate active compression with total information deletion.",
+      "caveat": "Residual regeneration was not integrated or benchmarked here."
+    },
+    {
+      "id": "sleep-2605.26099",
+      "title": "Do Language Models Need Sleep? Offline Recurrence for Improved Online Inference",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2605.26099",
+      "domain": "cognitive consolidation / recurrent memory",
+      "insight": "Move expensive consolidation into periodic offline phases.",
+      "adoption": "Compaction is separated from hot decode; sleep consolidation is a preregistered autonomous hypothesis.",
+      "caveat": "No fast-weight sleep training was run in this environment."
+    },
+    {
+      "id": "titans-2501.00663",
+      "title": "Titans: Learning to Memorize at Test Time",
+      "year": 2025,
+      "url": "https://arxiv.org/abs/2501.00663",
+      "domain": "test-time neural memory",
+      "insight": "Attention and persistent learned memory can be complementary short- and long-term systems.",
+      "adoption": "Native training exposes compressed-prefix losses while retaining exact local attention.",
+      "caveat": "FOCUS-Fabric is not a Titans reproduction."
+    },
+    {
+      "id": "atlas-2505.23735",
+      "title": "ATLAS: Learning to Optimally Memorize the Context at Test Time",
+      "year": 2025,
+      "url": "https://arxiv.org/abs/2505.23735",
+      "domain": "test-time optimization",
+      "insight": "Memory updates can optimize over current and past tokens instead of one-step online updates.",
+      "adoption": "Multi-query compilation and planned sleep-time optimization rather than irreversible one-token eviction.",
+      "caveat": "The release has no ATLAS-scale training evidence."
+    },
+    {
+      "id": "mesanet-2506.05233",
+      "title": "MesaNet: Sequence Modeling by Locally Optimal Test-Time Training",
+      "year": 2025,
+      "url": "https://arxiv.org/abs/2506.05233",
+      "domain": "numerical linear algebra / test-time learning",
+      "insight": "Solving an in-context objective more accurately can trade inference FLOPs for memory quality.",
+      "adoption": "Rate\u2013distortion objective records compute as a first-class cost; future candidates may use iterative solvers.",
+      "caveat": "No conjugate-gradient memory layer is implemented."
+    },
+    {
+      "id": "pcaf-2606.10435",
+      "title": "Parallel Causal Associative Fields: Gated Sparse Memory for Long-Context Language Modeling",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2606.10435",
+      "domain": "content-addressed sparse memory",
+      "insight": "Bounded sparse associative retrieval can complement a parametric local model.",
+      "adoption": "Supports the decision to keep exact residual/sparse retrieval as a separate family rather than forcing all history into one recurrent state.",
+      "caveat": "No hash-bucket successor cache is implemented."
+    },
+    {
+      "id": "ace-2510.04618",
+      "title": "Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models",
+      "year": 2025,
+      "url": "https://arxiv.org/abs/2510.04618",
+      "domain": "agent context / self-improvement",
+      "insight": "Structured incremental context updates resist brevity bias and context collapse.",
+      "adoption": "Typed append-only ledger, incremental capsules, and versioned experiment playbooks.",
+      "caveat": "Agent benchmark gains reported by ACE are not reproduced here."
+    },
+    {
+      "id": "agent-memory-survey-2512.13564",
+      "title": "Memory in the Age of AI Agents",
+      "year": 2025,
+      "url": "https://arxiv.org/abs/2512.13564",
+      "domain": "agent memory taxonomy / trust",
+      "insight": "Token, parametric, and latent forms serve factual, experiential, and working functions with distinct dynamics and trust risks.",
+      "adoption": "Numerical KV and semantic governance memory are explicitly separated.",
+      "caveat": "Taxonomy is broader than this implementation."
+    },
+    {
+      "id": "lifebench-2603.03781",
+      "title": "LifeBench: A Benchmark for Long-Horizon Multi-Source Memory",
+      "year": 2026,
+      "url": "https://arxiv.org/abs/2603.03781",
+      "domain": "long-horizon agent evaluation",
+      "insight": "Memory evaluation must cover procedural/non-declarative patterns and multi-source temporal integration.",
+      "adoption": "Added to the mandatory external evaluation matrix.",
+      "caveat": "Not executed here."
+    },
+    {
+      "id": "ruler-2404.06654",
+      "title": "RULER: What's the Real Context Size of Your Long-Context Language Models?",
+      "year": 2024,
+      "url": "https://arxiv.org/abs/2404.06654",
+      "domain": "long-context benchmark",
+      "insight": "Configurable length and tasks beyond literal needle retrieval expose effective context limits.",
+      "adoption": "Official-data runner supports RULER prediction/telemetry export.",
+      "caveat": "Official scorer has not been run here."
+    },
+    {
+      "id": "longbench-v2-2412.15204",
+      "title": "LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-context Multitasks",
+      "year": 2024,
+      "url": "https://arxiv.org/abs/2412.15204",
+      "domain": "realistic long-context benchmark",
+      "insight": "Realistic long documents and reasoning complement synthetic cache tests.",
+      "adoption": "Required release-stage benchmark.",
+      "caveat": "Not executed here."
+    },
+    {
+      "id": "babilong-2406.10149",
+      "title": "BABILong: Testing the Limits of LLMs with Long Context Reasoning-in-a-Haystack",
+      "year": 2024,
+      "url": "https://arxiv.org/abs/2406.10149",
+      "domain": "distributed-fact reasoning",
+      "insight": "Long irrelevant text plus multi-fact reasoning tests more than retrieval.",
+      "adoption": "Official-data runner supports BABILong records.",
+      "caveat": "Not executed here."
+    },
+    {
+      "id": "split-conformal-2018",
+      "title": "Distribution-Free Predictive Inference for Regression",
+      "year": 2018,
+      "url": "https://arxiv.org/abs/1604.04173",
+      "domain": "statistics / conformal prediction",
+      "insight": "Held-out nonconformity scores provide finite-sample marginal coverage under exchangeability.",
+      "adoption": "Per-codec split-conformal error/proxy calibration.",
+      "caveat": "Not a conditional or adversarial guarantee; shift failure is measured explicitly."
+    },
+    {
+      "id": "hoeffding-1963",
+      "title": "Probability Inequalities for Sums of Bounded Random Variables",
+      "year": 1963,
+      "url": "https://doi.org/10.1080/01621459.1963.10500830",
+      "domain": "probability / monitoring",
+      "insight": "Finite-window bounded observations admit conservative concentration intervals.",
+      "adoption": "DriftSentinel lower confidence bound for miscoverage audits.",
+      "caveat": "Independence assumptions are approximate in sequential decoding."
+    },
+    {
+      "id": "lsm-tree-1996",
+      "title": "The Log-Structured Merge-Tree (LSM-Tree)",
+      "year": 1996,
+      "url": "https://doi.org/10.1007/s002360050048",
+      "domain": "databases / compaction",
+      "insight": "Tiered immutable runs and background merging separate write path from consolidation.",
+      "adoption": "Binary-counter page hierarchy and immutable exact source-of-truth archives.",
+      "caveat": "The current implementation lacks crash-consistent manifests and concurrency control."
+    },
+    {
+      "id": "speculative-decoding-2211.17192",
+      "title": "Fast Inference from Transformers via Speculative Decoding",
+      "year": 2022,
+      "url": "https://arxiv.org/abs/2211.17192",
+      "domain": "verified speculative execution",
+      "insight": "A cheap drafter can be corrected by a target model without changing the target distribution.",
+      "adoption": "Backend-neutral exact greedy block verifier for compressed-memory drafts.",
+      "caveat": "Current proof/path is greedy-only and not optimized."
+    },
+    {
+      "id": "event-sourcing-fowler",
+      "title": "Event Sourcing",
+      "year": 2005,
+      "url": "https://martinfowler.com/eaaDev/EventSourcing.html",
+      "domain": "software architecture / provenance",
+      "insight": "An append-only event log preserves reconstructability and audit history.",
+      "adoption": "TrajectoryLedger stores immutable typed records and derives compact active views.",
+      "caveat": "A local hash chain is not a trusted timestamp or digital signature."
+    }
+  ]
+}

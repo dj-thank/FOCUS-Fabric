@@ -1,0 +1,13 @@
+include README.md LICENSE CITATION.cff CHANGELOG.md CONTRIBUTING.md SECURITY.md AGENTS.md Makefile
+recursive-include docs *.md *.json
+recursive-include references *.json
+recursive-include autonomy *.json
+recursive-include .agents *.md
+recursive-include .codex *.toml
+recursive-include scripts *.py *.sh
+recursive-include tests *.py
+
+recursive-include examples *.py
+recursive-include results *.json *.csv *.png
+recursive-include checkpoints *.json *.md
+recursive-include .github *.yml

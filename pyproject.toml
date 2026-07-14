@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "focus-fabric"
+version = "0.2.0"
+description = "Heterogeneous, uncertainty-gated memory fabric for Transformer KV state and long-horizon agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{name = "FOCUS-Fabric research release contributors"}]
+keywords = ["transformer", "kv-cache", "long-context", "memory", "conformal-prediction", "agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "numpy>=1.26",
+  "torch>=2.2",
+  "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "matplotlib>=3.8",
+  "build>=1.2",
+]
+hf = [
+  "transformers>=4.48,<6",
+  "accelerate>=1.2,<3",
+  "sentencepiece>=0.2,<1",
+]
+gpu = ["triton>=3.0; platform_system == 'Linux'"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["focus_fabric*", "focus_native*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

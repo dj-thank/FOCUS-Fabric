@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "seed": 314159,
+  "cases": 4,
+  "mean_fabric_nmse": 3.43519352554722e-05,
+  "mean_best_single_family_nmse": 0.03010239400464343,
+  "relative_nmse": 0.0011411695445276964,
+  "max_fallback_abs_error": 0.0,
+  "invalid_outputs": 0,
+  "mean_active_ratio": 0.16339005287247477,
+  "objective": 0.006569954050154463,
+  "single_family_reference": {
+    "mean_best_nmse": 0.03010239400464343,
+    "fabric_to_best_ratio": 0.0011411695445276964,
+    "note": "Diagnostic only: heterogeneous compilation is not required to dominate every random field."
+  },
+  "passed": true,
+  "details": [
+    {
+      "case": 0,
+      "seed": 314159,
+      "tokens": 72,
+      "dimension": 8,
+      "fabric_nmse": 1.101952057069866e-05,
+      "operator_nmse": 0.2567441165447235,
+      "coreset_nmse": 0.05327596887946129,
+      "best_baseline_nmse": 0.05327596887946129,
+      "active_ratio": 0.20616319444444445,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "hybrid_gaussian_c4_r4_e4",
+        "weighted_coreset_s4",
+        "moment_r4_o2",
+        "weighted_coreset_s12"
+      ]
+    },
+    {
+      "case": 1,
+      "seed": 418888,
+      "tokens": 80,
+      "dimension": 10,
+      "fabric_nmse": 4.575714410748333e-05,
+      "operator_nmse": 0.2594224512577057,
+      "coreset_nmse": 0.026429075747728348,
+      "best_baseline_nmse": 0.026429075747728348,
+      "active_ratio": 0.1325,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "operator_m2_r4",
+        "weighted_coreset_s4",
+        "gaussian_c2_r4",
+        "weighted_coreset_s12"
+      ]
+    },
+    {
+      "case": 2,
+      "seed": 523617,
+      "tokens": 88,
+      "dimension": 12,
+      "fabric_nmse": 1.965487354027573e-05,
+      "operator_nmse": 0.10053587704896927,
+      "coreset_nmse": 0.00031786205363459885,
+      "best_baseline_nmse": 0.00031786205363459885,
+      "active_ratio": 0.16548295454545456,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "hybrid_gaussian_c4_r4_e4",
+        "weighted_coreset_s4",
+        "gaussian_c2_r4",
+        "weighted_coreset_s16"
+      ]
+    },
+    {
+      "case": 3,
+      "seed": 628346,
+      "tokens": 96,
+      "dimension": 8,
+      "fabric_nmse": 6.097620280343108e-05,
+      "operator_nmse": 0.39570388197898865,
+      "coreset_nmse": 0.04038666933774948,
+      "best_baseline_nmse": 0.04038666933774948,
+      "active_ratio": 0.1494140625,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "hybrid_gaussian_c4_r4_e2",
+        "weighted_coreset_s4",
+        "moment_r4_o2",
+        "weighted_coreset_s12"
+      ]
+    }
+  ]
+}

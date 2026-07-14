@@ -1,0 +1,352 @@
+{
+  "mode": "dry-run",
+  "timestamp": "2026-07-14T11:33:39.415307+00:00",
+  "codex_available": false,
+  "baseline_sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+  "plans": [
+    {
+      "hypothesis": "H001-forward-influence-routing",
+      "branch": "autonomy/h001-forward-influence-routing-TIMESTAMP",
+      "codex_command": [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "--output-schema",
+        "autonomy/schemas/agent_result.schema.json",
+        "--output-last-message",
+        "results/experiments/H001-forward-influence-routing/agent-result.json",
+        "-"
+      ],
+      "prompt_sha256": "01e1b46bda234017448c9a13c389183eb5994a0c9d52b374d2a69b34f152648f",
+      "allowed_files": [
+        "src/focus_fabric/codecs.py",
+        "src/focus_fabric/controller.py",
+        "tests/",
+        "results/"
+      ],
+      "gates": [
+        {
+          "name": "syntax",
+          "command": [
+            "python",
+            "-m",
+            "compileall",
+            "-q",
+            "src",
+            "scripts",
+            "tests"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "unit-tests",
+          "command": [
+            "pytest",
+            "-q"
+          ],
+          "timeout_seconds": 900
+        },
+        {
+          "name": "cpu-evidence",
+          "command": [
+            "python",
+            "scripts/benchmark_fabric.py",
+            "--threads",
+            "1",
+            "--output",
+            "results/candidate_benchmark.json"
+          ],
+          "timeout_seconds": 1800,
+          "environment": {
+            "PYTHONPATH": "src",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1"
+          }
+        },
+        {
+          "name": "claims",
+          "command": [
+            "python",
+            "scripts/autonomy/validate_claims.py"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "drift-audit",
+          "command": [
+            "python",
+            "scripts/autonomy/detect_drift.py"
+          ],
+          "timeout_seconds": 180
+        }
+      ],
+      "external_holdout": {
+        "evaluator": "scripts/autonomy/holdout_evaluator.py",
+        "seed_timing": "generated after the Codex run",
+        "policy": "candidate safety must pass and randomized objective may regress by at most 2% versus root baseline"
+      }
+    },
+    {
+      "hypothesis": "H002-sleep-consolidation",
+      "branch": "autonomy/h002-sleep-consolidation-TIMESTAMP",
+      "codex_command": [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "--output-schema",
+        "autonomy/schemas/agent_result.schema.json",
+        "--output-last-message",
+        "results/experiments/H002-sleep-consolidation/agent-result.json",
+        "-"
+      ],
+      "prompt_sha256": "cb4725dd6383cc8fb23aa5518a677cd54cc42b2d74c1162fb0cc6d25c4a293e4",
+      "allowed_files": [
+        "src/focus_fabric/agent_memory.py",
+        "src/focus_fabric/training.py",
+        "tests/",
+        "results/"
+      ],
+      "gates": [
+        {
+          "name": "syntax",
+          "command": [
+            "python",
+            "-m",
+            "compileall",
+            "-q",
+            "src",
+            "scripts",
+            "tests"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "unit-tests",
+          "command": [
+            "pytest",
+            "-q"
+          ],
+          "timeout_seconds": 900
+        },
+        {
+          "name": "cpu-evidence",
+          "command": [
+            "python",
+            "scripts/benchmark_fabric.py",
+            "--threads",
+            "1",
+            "--output",
+            "results/candidate_benchmark.json"
+          ],
+          "timeout_seconds": 1800,
+          "environment": {
+            "PYTHONPATH": "src",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1"
+          }
+        },
+        {
+          "name": "claims",
+          "command": [
+            "python",
+            "scripts/autonomy/validate_claims.py"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "drift-audit",
+          "command": [
+            "python",
+            "scripts/autonomy/detect_drift.py"
+          ],
+          "timeout_seconds": 180
+        }
+      ],
+      "external_holdout": {
+        "evaluator": "scripts/autonomy/holdout_evaluator.py",
+        "seed_timing": "generated after the Codex run",
+        "policy": "candidate safety must pass and randomized objective may regress by at most 2% versus root baseline"
+      }
+    },
+    {
+      "hypothesis": "H003-conformal-drift-sentinels",
+      "branch": "autonomy/h003-conformal-drift-sentinels-TIMESTAMP",
+      "codex_command": [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "--output-schema",
+        "autonomy/schemas/agent_result.schema.json",
+        "--output-last-message",
+        "results/experiments/H003-conformal-drift-sentinels/agent-result.json",
+        "-"
+      ],
+      "prompt_sha256": "f3921b1000e5a2932d136cee533e408367931f3f912e854efd8687d0f8e0c34f",
+      "allowed_files": [
+        "src/focus_fabric/certificate.py",
+        "src/focus_fabric/fabric.py",
+        "tests/",
+        "results/"
+      ],
+      "gates": [
+        {
+          "name": "syntax",
+          "command": [
+            "python",
+            "-m",
+            "compileall",
+            "-q",
+            "src",
+            "scripts",
+            "tests"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "unit-tests",
+          "command": [
+            "pytest",
+            "-q"
+          ],
+          "timeout_seconds": 900
+        },
+        {
+          "name": "cpu-evidence",
+          "command": [
+            "python",
+            "scripts/benchmark_fabric.py",
+            "--threads",
+            "1",
+            "--output",
+            "results/candidate_benchmark.json"
+          ],
+          "timeout_seconds": 1800,
+          "environment": {
+            "PYTHONPATH": "src",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1"
+          }
+        },
+        {
+          "name": "claims",
+          "command": [
+            "python",
+            "scripts/autonomy/validate_claims.py"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "drift-audit",
+          "command": [
+            "python",
+            "scripts/autonomy/detect_drift.py"
+          ],
+          "timeout_seconds": 180
+        }
+      ],
+      "external_holdout": {
+        "evaluator": "scripts/autonomy/holdout_evaluator.py",
+        "seed_timing": "generated after the Codex run",
+        "policy": "candidate safety must pass and randomized objective may regress by at most 2% versus root baseline"
+      }
+    },
+    {
+      "hypothesis": "H004-layer-budget-cooptimization",
+      "branch": "autonomy/h004-layer-budget-cooptimization-TIMESTAMP",
+      "codex_command": [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "--output-schema",
+        "autonomy/schemas/agent_result.schema.json",
+        "--output-last-message",
+        "results/experiments/H004-layer-budget-cooptimization/agent-result.json",
+        "-"
+      ],
+      "prompt_sha256": "aedc5526e34bb052420cc15dda9203a24d037a9b5a7668bb8e2d47f50312688b",
+      "allowed_files": [
+        "src/focus_fabric/controller.py",
+        "src/focus_fabric/integration.py",
+        "tests/",
+        "results/"
+      ],
+      "gates": [
+        {
+          "name": "syntax",
+          "command": [
+            "python",
+            "-m",
+            "compileall",
+            "-q",
+            "src",
+            "scripts",
+            "tests"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "unit-tests",
+          "command": [
+            "pytest",
+            "-q"
+          ],
+          "timeout_seconds": 900
+        },
+        {
+          "name": "cpu-evidence",
+          "command": [
+            "python",
+            "scripts/benchmark_fabric.py",
+            "--threads",
+            "1",
+            "--output",
+            "results/candidate_benchmark.json"
+          ],
+          "timeout_seconds": 1800,
+          "environment": {
+            "PYTHONPATH": "src",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1"
+          }
+        },
+        {
+          "name": "claims",
+          "command": [
+            "python",
+            "scripts/autonomy/validate_claims.py"
+          ],
+          "timeout_seconds": 180
+        },
+        {
+          "name": "drift-audit",
+          "command": [
+            "python",
+            "scripts/autonomy/detect_drift.py"
+          ],
+          "timeout_seconds": 180
+        }
+      ],
+      "external_holdout": {
+        "evaluator": "scripts/autonomy/holdout_evaluator.py",
+        "seed_timing": "generated after the Codex run",
+        "policy": "candidate safety must pass and randomized objective may regress by at most 2% versus root baseline"
+      }
+    }
+  ]
+}

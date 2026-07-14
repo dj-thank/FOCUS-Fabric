@@ -1,0 +1,357 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-07-14",
+  "policy": "Every quantitative public statement must match one of the allowed wordings or be more narrowly qualified, and its artifact digest must match.",
+  "claims": [
+    {
+      "id": "C001",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/memory/full_exact_bytes",
+      "value": 98304,
+      "allowed_wording": [
+        "Controlled exact KV bytes are 98,304."
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "C002",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/memory/fabric_active_bytes",
+      "value": 8584,
+      "allowed_wording": [
+        "Controlled active Fabric bytes are 8,584."
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "C003",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/memory/fabric_compression",
+      "value": 11.452003727865797,
+      "allowed_wording": [
+        "Controlled active compression is 11.452x for the committed case."
+      ],
+      "status": "measured",
+      "tolerance": 1.1452003727865797e-09
+    },
+    {
+      "id": "C004",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/in_distribution/fabric_approx/output_nmse",
+      "value": 5.1179438742110506e-05,
+      "allowed_wording": [
+        "Controlled in-distribution Fabric output NMSE is 5.11794e-5."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C005",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/in_distribution/operator_only_memory_matched/output_nmse",
+      "value": 0.08776581287384033,
+      "allowed_wording": [
+        "Memory-matched operator output NMSE is 0.0877658."
+      ],
+      "status": "measured",
+      "tolerance": 8.776581287384034e-12
+    },
+    {
+      "id": "C006",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/in_distribution/coreset_memory_matched/output_nmse",
+      "value": 0.0004401675832923502,
+      "allowed_wording": [
+        "Query-aware memory-matched coreset output NMSE is 0.000440168."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C007",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/in_distribution/certificate/coverage",
+      "value": 0.96875,
+      "allowed_wording": [
+        "In-distribution empirical conformal coverage is 0.96875."
+      ],
+      "status": "measured",
+      "tolerance": 9.6875e-11
+    },
+    {
+      "id": "C008",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/distribution_shift/certificate/coverage",
+      "value": 0.8072916666666666,
+      "allowed_wording": [
+        "Shifted empirical coverage is 0.807292, below nominal coverage."
+      ],
+      "status": "measured",
+      "tolerance": 8.072916666666667e-11
+    },
+    {
+      "id": "C009",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/synthetic/splits/distribution_shift/fabric_guarded/fallback_rate",
+      "value": 0.2552083333333333,
+      "allowed_wording": [
+        "Shift fallback rate is 0.255208 in the committed case."
+      ],
+      "status": "measured",
+      "tolerance": 2.5520833333333332e-11
+    },
+    {
+      "id": "C010",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/repeated_compaction/final/invalid_codec_outputs",
+      "value": 0,
+      "allowed_wording": [
+        "Repeated compaction produced zero invalid codec outputs."
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "C011",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/repeated_compaction/max_relative_attention_error",
+      "value": 0.02892240136861801,
+      "allowed_wording": [
+        "Repeated-compaction max relative attention error is 0.0289224."
+      ],
+      "status": "measured",
+      "tolerance": 2.8922401368618014e-12
+    },
+    {
+      "id": "C012",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/end_to_end/teacher_forced/argmax_token_agreement",
+      "value": 1.0,
+      "allowed_wording": [
+        "Teacher-forced argmax agreement is 1.0 over the committed 64-token case."
+      ],
+      "status": "measured",
+      "tolerance": 1e-10
+    },
+    {
+      "id": "C013",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/end_to_end/free_running/token_agreement",
+      "value": 1.0,
+      "allowed_wording": [
+        "Free-running token agreement is 1.0 over the committed 8-token case."
+      ],
+      "status": "measured",
+      "tolerance": 1e-10
+    },
+    {
+      "id": "C014",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/checkpoint_trace/layers/0/memory/fabric_compression",
+      "value": 13.11419423692636,
+      "allowed_wording": [
+        "Layer-0 learned-trace active compression is 13.114x."
+      ],
+      "status": "measured",
+      "tolerance": 1.3114194236926361e-09
+    },
+    {
+      "id": "C015",
+      "artifact": "results/holdout_selftest.json",
+      "sha256": "c9559d77196df3204cc0932a253ff180e85191cd2cf4a4cbe28a8953f161447b",
+      "metric_pointer": "/mean_fabric_nmse",
+      "value": 3.1504659394461974e-05,
+      "allowed_wording": [
+        "Randomized holdout mean Fabric NMSE is 3.15047e-5."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C016",
+      "artifact": "results/holdout_selftest.json",
+      "sha256": "c9559d77196df3204cc0932a253ff180e85191cd2cf4a4cbe28a8953f161447b",
+      "metric_pointer": "/mean_best_single_family_nmse",
+      "value": 0.0003532669118915995,
+      "allowed_wording": [
+        "Randomized holdout mean best single-family NMSE is 0.000353267."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C017",
+      "artifact": "results/holdout_selftest.json",
+      "sha256": "c9559d77196df3204cc0932a253ff180e85191cd2cf4a4cbe28a8953f161447b",
+      "metric_pointer": "/max_fallback_abs_error",
+      "value": 0.0,
+      "allowed_wording": [
+        "Randomized holdout forced-fallback max absolute error is zero."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C018",
+      "artifact": "results/holdout_selftest.json",
+      "sha256": "c9559d77196df3204cc0932a253ff180e85191cd2cf4a4cbe28a8953f161447b",
+      "metric_pointer": "/invalid_outputs",
+      "value": 0,
+      "allowed_wording": [
+        "Randomized holdout has zero invalid outputs."
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "C019",
+      "artifact": "results/agent_memory_benchmark.json",
+      "sha256": "01ea613e985381e3e0654cd7f732ab3a9965c53211ee87a5e43dd5b9a5cdabf0",
+      "metric_pointer": "/mean_protected_retention",
+      "value": 1.0,
+      "allowed_wording": [
+        "Protected semantic-record retention is 1.0 in the committed substrate benchmark."
+      ],
+      "status": "measured",
+      "tolerance": 1e-10
+    },
+    {
+      "id": "C020",
+      "artifact": "results/agent_memory_benchmark.json",
+      "sha256": "01ea613e985381e3e0654cd7f732ab3a9965c53211ee87a5e43dd5b9a5cdabf0",
+      "metric_pointer": "/hash_chain_success_rate",
+      "value": 1.0,
+      "allowed_wording": [
+        "Hash-chain verification rate is 1.0 in the committed substrate benchmark."
+      ],
+      "status": "measured",
+      "tolerance": 1e-10
+    },
+    {
+      "id": "C021",
+      "artifact": "results/agent_memory_benchmark.json",
+      "sha256": "01ea613e985381e3e0654cd7f732ab3a9965c53211ee87a5e43dd5b9a5cdabf0",
+      "metric_pointer": "/poison_policy_promotion_rate",
+      "value": 0.0,
+      "allowed_wording": [
+        "Poison prose policy-promotion rate is 0.0 in the committed substrate benchmark."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C022",
+      "artifact": "results/gpu_benchmark.json",
+      "sha256": "21a355d8c590b235bc2b4d2da0924a2e0c4d92adff63ea3af8b0229077d8a0c3",
+      "metric_pointer": "/status",
+      "value": "not_executed",
+      "allowed_wording": [
+        "GPU benchmark status is not_executed."
+      ],
+      "status": "not_executed"
+    },
+    {
+      "id": "C023",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/official_benchmarks/LongBench",
+      "value": null,
+      "allowed_wording": [
+        "No LongBench score is present; the field is null."
+      ],
+      "status": "not_executed"
+    },
+    {
+      "id": "C024",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/official_benchmarks/RULER",
+      "value": null,
+      "allowed_wording": [
+        "No RULER score is present; the field is null."
+      ],
+      "status": "not_executed"
+    },
+    {
+      "id": "C025",
+      "artifact": "results/fabric_benchmark.json",
+      "sha256": "fb41d9db3385f90baa76f609339d173af7ad5b4760c6ea62cd4d7f931d083912",
+      "metric_pointer": "/official_benchmarks/BABILong",
+      "value": null,
+      "allowed_wording": [
+        "No BABILong score is present; the field is null."
+      ],
+      "status": "not_executed"
+    },
+    {
+      "id": "C026",
+      "artifact": "results/randomized_holdout_suite.json",
+      "sha256": "4dd920327600879cee01308812c6cd8cb91624ebf747ee9384bcfdcdaf6741b6",
+      "metric_pointer": "/total_cases",
+      "value": 11,
+      "allowed_wording": [
+        "The retained randomized holdout suite contains 11 controlled cases across three seeds."
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "C027",
+      "artifact": "results/randomized_holdout_suite.json",
+      "sha256": "4dd920327600879cee01308812c6cd8cb91624ebf747ee9384bcfdcdaf6741b6",
+      "metric_pointer": "/pass_rate",
+      "value": 1.0,
+      "allowed_wording": [
+        "All three retained randomized holdout runs passed the declared safety condition."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C028",
+      "artifact": "results/randomized_holdout_suite.json",
+      "sha256": "4dd920327600879cee01308812c6cd8cb91624ebf747ee9384bcfdcdaf6741b6",
+      "metric_pointer": "/worst_run_fabric_to_baseline_ratio",
+      "value": 0.098802554956204,
+      "allowed_wording": [
+        "The worst retained run-level Fabric-to-best-single-family NMSE ratio is 0.0988026 on controlled attention fields."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C029",
+      "artifact": "results/randomized_holdout_suite.json",
+      "sha256": "4dd920327600879cee01308812c6cd8cb91624ebf747ee9384bcfdcdaf6741b6",
+      "metric_pointer": "/max_fallback_abs_error",
+      "value": 0.0,
+      "allowed_wording": [
+        "Across the retained randomized suite, forced exact fallback maximum absolute error is zero."
+      ],
+      "status": "measured",
+      "tolerance": 1e-12
+    },
+    {
+      "id": "C030",
+      "artifact": "results/randomized_holdout_suite.json",
+      "sha256": "4dd920327600879cee01308812c6cd8cb91624ebf747ee9384bcfdcdaf6741b6",
+      "metric_pointer": "/invalid_outputs",
+      "value": 0,
+      "allowed_wording": [
+        "Across the retained randomized suite, invalid codec outputs are zero."
+      ],
+      "status": "measured"
+    }
+  ]
+}
