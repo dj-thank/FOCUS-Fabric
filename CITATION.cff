@@ -6,5 +6,7 @@ version: 0.2.0
 date-released: 2026-07-14
 license: Apache-2.0
 authors:
+  - name: "dj-thank"
   - name: "FOCUS-Fabric research release contributors"
+repository-code: "https://github.com/dj-thank/FOCUS-Fabric"
 abstract: "A research implementation of heterogeneous attention-memory codecs, exact fallback, repeated compaction, semantic agent memory, verified generation, and an autonomous Codex experimentation harness."

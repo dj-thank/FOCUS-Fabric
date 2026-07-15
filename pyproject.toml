@@ -9,7 +9,10 @@ description = "Heterogeneous, uncertainty-gated memory fabric for Transformer KV
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-authors = [{name = "FOCUS-Fabric research release contributors"}]
+authors = [
+  {name = "dj-thank"},
+  {name = "FOCUS-Fabric research release contributors"},
+]
 keywords = ["transformer", "kv-cache", "long-context", "memory", "conformal-prediction", "agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",

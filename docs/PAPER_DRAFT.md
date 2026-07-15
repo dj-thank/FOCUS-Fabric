@@ -2,6 +2,8 @@
 
 **Public research draft — 2026-07-14**
 
+**Project creator:** [dj-thank](https://github.com/dj-thank)
+
 ## Abstract
 
 Long-context decoder inference is commonly treated as a uniform key–value (KV)
