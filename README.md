@@ -2,7 +2,7 @@
 
 **A heterogeneous, uncertainty-gated memory fabric for Transformer KV state, long-horizon agent memory, and verified generation.**
 
-FOCUS-Fabricは、旧FOCUS-KV/FOCUS-Nativeを監査・再構築した研究リリースです。単一の圧縮方式を全head・layer・pageへ強制せず、各領域のattention場に応じて異なる記憶表現を選び、分布外ではexact archiveへ戻ります。
+FOCUS-Fabricは、研究リリースです。単一の圧縮方式を全head・layer・pageへ強制せず、各領域のattention場に応じて異なる記憶表現を選び、分布外ではexact archiveへ戻ります。
 
 > **公開上の位置づけ**: 実行可能な研究プロトタイプです。既存の大規模一般LLMより優れた自然言語能力、公式LongBench/RULER/BABILongスコア、GPU高速化、物理HBM帯域削減は未実証であり、主張しません。
 
