@@ -1,0 +1,17 @@
+model = "gpt-5.6"
+model_reasoning_effort = "xhigh"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+allow_login_shell = false
+
+[features]
+multi_agent = true
+goals = true
+hooks = true
+memories = false
+
+[agents]
+max_threads = 6
+max_depth = 1
+job_max_runtime_seconds = 1800
+interrupt_message = true

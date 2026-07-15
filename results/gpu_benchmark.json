@@ -1,0 +1,9 @@
+{
+  "status": "not_executed",
+  "reason": "CUDA or Triton is unavailable",
+  "cuda_available": false,
+  "triton_available": false,
+  "kernel_correctness": null,
+  "latency_ms": null,
+  "physical_hbm_bandwidth_gb_s": null
+}

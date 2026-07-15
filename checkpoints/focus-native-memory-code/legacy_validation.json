@@ -1,0 +1,80 @@
+{
+  "exact_accuracy": 0.59375,
+  "focus_accuracy": 0.44921875,
+  "copy_only_accuracy": 0.58203125,
+  "exact_focus_agreement": 0.650390625,
+  "rows": [
+    {
+      "length": 48,
+      "records": "default",
+      "exact_accuracy": 0.890625,
+      "focus_accuracy": 0.921875,
+      "copy_only_accuracy": 0.890625,
+      "exact_focus_agreement": 0.96875,
+      "positive_gate": 0.9720860775560141
+    },
+    {
+      "length": 96,
+      "records": "default",
+      "exact_accuracy": 0.90625,
+      "focus_accuracy": 0.078125,
+      "copy_only_accuracy": 0.90625,
+      "exact_focus_agreement": 0.171875,
+      "positive_gate": 0.9397656042128801
+    },
+    {
+      "length": 192,
+      "records": "default",
+      "exact_accuracy": 0.109375,
+      "focus_accuracy": 0.015625,
+      "copy_only_accuracy": 0.078125,
+      "exact_focus_agreement": 0.390625,
+      "positive_gate": 0.7378746876493096
+    },
+    {
+      "length": 384,
+      "records": "default",
+      "exact_accuracy": 0.21875,
+      "focus_accuracy": 0.015625,
+      "copy_only_accuracy": 0.171875,
+      "exact_focus_agreement": 0.5625,
+      "positive_gate": 0.8004220342263579
+    },
+    {
+      "length": 96,
+      "records": 4,
+      "exact_accuracy": 1.0,
+      "focus_accuracy": 1.0,
+      "copy_only_accuracy": 1.0,
+      "exact_focus_agreement": 1.0,
+      "positive_gate": 0.9987208442762494
+    },
+    {
+      "length": 96,
+      "records": 24,
+      "exact_accuracy": 0.546875,
+      "focus_accuracy": 0.578125,
+      "copy_only_accuracy": 0.546875,
+      "exact_focus_agreement": 0.9375,
+      "positive_gate": 0.8427080260589719
+    },
+    {
+      "length": 192,
+      "records": 8,
+      "exact_accuracy": 1.0,
+      "focus_accuracy": 0.9375,
+      "copy_only_accuracy": 1.0,
+      "exact_focus_agreement": 0.9375,
+      "positive_gate": 0.983934324234724
+    },
+    {
+      "length": 192,
+      "records": 28,
+      "exact_accuracy": 0.078125,
+      "focus_accuracy": 0.046875,
+      "copy_only_accuracy": 0.0625,
+      "exact_focus_agreement": 0.234375,
+      "positive_gate": 0.7166062360629439
+    }
+  ]
+}

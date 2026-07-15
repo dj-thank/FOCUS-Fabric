@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "seed": 17072026,
+  "cases": 3,
+  "mean_fabric_nmse": 3.1504659394461974e-05,
+  "mean_best_single_family_nmse": 0.0003532669118915995,
+  "relative_nmse": 0.0891808950511879,
+  "max_fallback_abs_error": 0.0,
+  "invalid_outputs": 0,
+  "mean_active_ratio": 0.17841593013468013,
+  "objective": 0.007168141864781667,
+  "single_family_reference": {
+    "mean_best_nmse": 0.0003532669118915995,
+    "fabric_to_best_ratio": 0.0891808950511879,
+    "note": "Diagnostic only: heterogeneous compilation is not required to dominate every random field."
+  },
+  "passed": true,
+  "details": [
+    {
+      "case": 0,
+      "seed": 17072026,
+      "tokens": 72,
+      "dimension": 8,
+      "fabric_nmse": 2.681937621673569e-05,
+      "operator_nmse": 0.1260099709033966,
+      "coreset_nmse": 0.00025540197384543717,
+      "best_baseline_nmse": 0.00025540197384543717,
+      "active_ratio": 0.2026909722222222,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "hybrid_gaussian_c4_r4_e2",
+        "weighted_coreset_s4",
+        "gaussian_c2_r4",
+        "weighted_coreset_s16"
+      ]
+    },
+    {
+      "case": 1,
+      "seed": 17176755,
+      "tokens": 80,
+      "dimension": 10,
+      "fabric_nmse": 2.2673166313325055e-05,
+      "operator_nmse": 0.27065226435661316,
+      "coreset_nmse": 0.0002991535293404013,
+      "best_baseline_nmse": 0.0002991535293404013,
+      "active_ratio": 0.1784375,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "hybrid_gaussian_c4_r4_e2",
+        "weighted_coreset_s4",
+        "gaussian_c2_r4",
+        "weighted_coreset_s16"
+      ]
+    },
+    {
+      "case": 2,
+      "seed": 17281484,
+      "tokens": 88,
+      "dimension": 12,
+      "fabric_nmse": 4.502143565332517e-05,
+      "operator_nmse": 0.29330867528915405,
+      "coreset_nmse": 0.00050524523248896,
+      "best_baseline_nmse": 0.00050524523248896,
+      "active_ratio": 0.15411931818181818,
+      "fallback_max_abs_error": 0.0,
+      "invalid_outputs": 0,
+      "selected_codecs": [
+        "gaussian_c4_r4",
+        "weighted_coreset_s4",
+        "gaussian_c2_r4",
+        "weighted_coreset_s16"
+      ]
+    }
+  ]
+}

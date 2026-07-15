@@ -1,0 +1,20 @@
+{
+  "vocab_size": 1058,
+  "d_model": 128,
+  "n_layers": 4,
+  "n_heads": 4,
+  "d_ff": 384,
+  "max_seq_len": 2048,
+  "focus_patches": 4,
+  "focus_rank": 8,
+  "norm_eps": 1e-5,
+  "tie_embeddings": true,
+  "memory_code_enabled": true,
+  "memory_code_head": 3,
+  "memory_code_scale": 8.0,
+  "memory_code_seed": 20260417,
+  "memory_router_active": false,
+  "memory_router_temperature": 12.0,
+  "memory_router_min_temperature": 1.0,
+  "memory_router_max_temperature": 64.0
+}

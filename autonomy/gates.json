@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "commands": [
+    {
+      "name": "syntax",
+      "command": ["python", "-m", "compileall", "-q", "src", "scripts", "tests"],
+      "timeout_seconds": 180
+    },
+    {
+      "name": "unit-tests",
+      "command": ["pytest", "-q"],
+      "timeout_seconds": 900
+    },
+    {
+      "name": "cpu-evidence",
+      "command": ["python", "scripts/benchmark_fabric.py", "--threads", "1", "--output", "results/candidate_benchmark.json"],
+      "timeout_seconds": 1800,
+      "environment": {"PYTHONPATH": "src", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    },
+    {
+      "name": "claims",
+      "command": ["python", "scripts/autonomy/validate_claims.py"],
+      "timeout_seconds": 180
+    },
+    {
+      "name": "drift-audit",
+      "command": ["python", "scripts/autonomy/detect_drift.py"],
+      "timeout_seconds": 180
+    }
+  ]
+}
