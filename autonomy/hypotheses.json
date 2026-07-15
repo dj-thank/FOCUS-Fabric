@@ -4,12 +4,13 @@
     {
       "id": "H001-forward-influence-routing",
       "status": "pending",
-      "title": "Forward-influence and uncertainty jointly outperform retrospective attention scores for residual retention",
-      "rationale": "High past attention is not equivalent to future accessibility. Preserve tokens with high counterfactual output influence or predictive uncertainty.",
-      "controls": ["operator-only", "weighted KV coreset", "attention-mass-only residual selection"],
+      "title": "Forward-influence routing improves the committed FOCUS-Fabric baseline at matched active bytes",
+      "rationale": "Test whether a forward-influence routing change reduces in-distribution output NMSE without changing active bytes or weakening the declared token-safety checks.",
+      "controls": ["committed FOCUS-Fabric baseline under the identical benchmark configuration"],
       "primary_metric": "synthetic.in_distribution.output_nmse",
+      "evaluator": "fabric_benchmark_v1",
       "disconfirming_condition": "No >=5% objective improvement at matched active bytes, or any token-agreement regression.",
-      "allowed_files": ["src/focus_fabric/codecs.py", "src/focus_fabric/controller.py", "tests/", "results/"]
+      "allowed_files": ["src/focus_fabric/codecs.py", "src/focus_fabric/controller.py", "tests/"]
     },
     {
       "id": "H002-sleep-consolidation",
@@ -19,7 +20,7 @@
       "controls": ["exact cold archive", "binary page hierarchy"],
       "primary_metric": "archive_bytes_read_per_verified_token",
       "disconfirming_condition": "Any governance-memory erasure, provenance break, or exact sequence mismatch.",
-      "allowed_files": ["src/focus_fabric/agent_memory.py", "src/focus_fabric/training.py", "tests/", "results/"]
+      "allowed_files": ["src/focus_fabric/agent_memory.py", "src/focus_fabric/training.py", "tests/"]
     },
     {
       "id": "H003-conformal-drift-sentinels",
@@ -29,7 +30,7 @@
       "controls": ["static certificate", "support-radius-only OOD gate"],
       "primary_metric": "shifted_false_accept_rate",
       "disconfirming_condition": "No reduction in false accepts at equal or lower exact-audit traffic.",
-      "allowed_files": ["src/focus_fabric/certificate.py", "src/focus_fabric/fabric.py", "tests/", "results/"]
+      "allowed_files": ["src/focus_fabric/certificate.py", "src/focus_fabric/fabric.py", "tests/"]
     },
     {
       "id": "H004-layer-budget-cooptimization",
@@ -39,7 +40,7 @@
       "controls": ["uniform ratio", "independent per-head objective"],
       "primary_metric": "global_rate_distortion_objective",
       "disconfirming_condition": "No improvement on held-out traces, or allocation becomes unstable across seeds.",
-      "allowed_files": ["src/focus_fabric/controller.py", "src/focus_fabric/integration.py", "tests/", "results/"]
+      "allowed_files": ["src/focus_fabric/controller.py", "src/focus_fabric/integration.py", "tests/"]
     }
   ]
 }

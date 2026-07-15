@@ -10,25 +10,40 @@ A dry-run mode validates the entire plan without requiring Codex credentials.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import fnmatch
 import hashlib
 import json
+import math
 import os
+import re
 import secrets
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WORKTREE_ROOT = ROOT.parent / ".focus-fabric-worktrees"
+SUPPORTED_EVALUATORS = {"fabric_benchmark_v1"}
+REQUIRED_RESEARCH_ROLES = {
+    "research_scout",
+    "memory_redteam",
+    "architecture_scientist",
+    "benchmark_adversary",
+    "reproducibility_auditor",
+    "claim_auditor",
+}
 
 
 class PipelineError(RuntimeError):
+    pass
+
+
+class RootIntegrityError(PipelineError):
     pass
 
 
@@ -46,6 +61,47 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def exact_nonnegative_integer(value: Any, label: str) -> int:
+    """Parse a JSON scalar without silently truncating fractional byte counts."""
+
+    if isinstance(value, bool):
+        raise PipelineError(f"{label} must be a non-negative integer")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise PipelineError(f"{label} must be a finite integer-valued number")
+        parsed = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]*", value):
+        parsed = int(value)
+    else:
+        raise PipelineError(f"{label} must be a non-negative integer")
+    if parsed < 0:
+        raise PipelineError(f"{label} must be a non-negative integer")
+    return parsed
+
+
+def finite_number(
+    value: Any,
+    label: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Require a real finite JSON number within an optional closed interval."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PipelineError(f"{label} must be a finite number")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise PipelineError(f"{label} must be a finite number")
+    if minimum is not None and parsed < minimum:
+        raise PipelineError(f"{label} must be >= {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise PipelineError(f"{label} must be <= {maximum}")
+    return parsed
 
 
 class EventLedger:
@@ -82,6 +138,7 @@ class Hypothesis:
     disconfirming_condition: str
     allowed_files: tuple[str, ...]
     status: str
+    evaluator: str | None = None
 
     @classmethod
     def from_json(cls, payload: dict[str, Any]) -> "Hypothesis":
@@ -94,7 +151,185 @@ class Hypothesis:
             disconfirming_condition=payload["disconfirming_condition"],
             allowed_files=tuple(payload["allowed_files"]),
             status=payload["status"],
+            evaluator=payload.get("evaluator"),
         )
+
+
+@dataclass(frozen=True)
+class CodexRuntime:
+    path: Path
+    version: str
+
+
+@dataclass(frozen=True)
+class RootSnapshot:
+    head: str
+    status: str
+    tracked_tree_sha256: str
+    baseline_sha256: str
+
+
+def codex_candidates(requested: str) -> list[Path]:
+    """Return Codex executables in precedence order without trusting PATH alone."""
+
+    candidates: list[Path] = []
+    configured = os.environ.get("FOCUS_CODEX")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    if requested != "codex":
+        explicit = Path(requested).expanduser()
+        resolved = shutil.which(requested)
+        candidates.append(Path(resolved) if resolved else explicit)
+    else:
+        if os.name == "nt":
+            local_app_data = os.environ.get("LOCALAPPDATA")
+            if local_app_data:
+                desktop_bin = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+                if desktop_bin.is_dir():
+                    desktop_runtimes = sorted(
+                        desktop_bin.rglob("codex.exe"),
+                        key=lambda item: item.stat().st_mtime_ns,
+                        reverse=True,
+                    )
+                    candidates.extend(desktop_runtimes)
+        resolved = shutil.which(requested)
+        if resolved:
+            candidates.append(Path(resolved))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = os.path.normcase(str(candidate.resolve(strict=False)))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def resolve_codex_runtime(requested: str) -> CodexRuntime:
+    failures: list[str] = []
+    for candidate in codex_candidates(requested):
+        try:
+            completed = run(
+                [str(candidate), "--version"],
+                cwd=ROOT,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            failures.append(f"{candidate}: {type(error).__name__}")
+            continue
+        version = (completed.stdout or completed.stderr).strip()
+        if completed.returncode == 0 and version:
+            return CodexRuntime(path=candidate, version=version.splitlines()[0])
+        failures.append(f"{candidate}: exit {completed.returncode}")
+    detail = "; ".join(failures) if failures else "no candidates discovered"
+    raise PipelineError(f"no working Codex executable ({detail})")
+
+
+def build_codex_exec_command(
+    runtime: CodexRuntime,
+    *,
+    schema_path: Path,
+    result_path: Path,
+    project_root: Path = ROOT,
+    trusted_root: Path = ROOT,
+    hook_event_dir: Path | None = None,
+) -> list[str]:
+    """Build a noninteractive command using options accepted by current Codex."""
+
+    command = [
+        str(runtime.path),
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--strict-config",
+        "--ignore-user-config",
+        "--enable",
+        "multi_agent",
+        "--enable",
+        "hooks",
+        "--dangerously-bypass-hook-trust",
+        "-m",
+        project_root_model(project_root),
+        "-c",
+        'model_reasoning_effort="xhigh"',
+        "-c",
+        "agents.max_threads=6",
+        "-c",
+        "agents.max_depth=1",
+        "-c",
+        "agents.job_max_runtime_seconds=1800",
+        "-c",
+        "agents.interrupt_message=true",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
+        "-c",
+        "allow_login_shell=false",
+        "-c",
+        'shell_environment_policy.inherit="core"',
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "workspace-write",
+        "--ephemeral",
+        "--output-schema",
+        str(schema_path),
+        "--output-last-message",
+        str(result_path),
+        "-",
+    ]
+    profile_directory = project_root / ".codex" / "agents"
+    profiles = sorted(profile_directory.glob("*.toml"))
+    if not profiles:
+        raise PipelineError(f"no project agent profiles found: {profile_directory}")
+    insertion_point = command.index("--json")
+    overrides: list[str] = []
+    for profile in profiles:
+        content = profile.read_text(encoding="utf-8")
+        name_match = re.search(r'^name\s*=\s*"([a-z0-9_]+)"\s*$', content, re.MULTILINE)
+        description_match = re.search(
+            r'^description\s*=\s*"([^"]+)"\s*$', content, re.MULTILINE
+        )
+        if not name_match or not description_match:
+            raise PipelineError(f"invalid agent profile metadata: {profile}")
+        name = name_match.group(1)
+        description = description_match.group(1)
+        overrides.extend(
+            [
+                "-c",
+                f"agents.{name}.description={json.dumps(description)}",
+                "-c",
+                f"agents.{name}.config_file={json.dumps(str(profile.resolve()))}",
+            ]
+        )
+    hook_script = trusted_root / "scripts/autonomy/record_subagent_event.py"
+    if not hook_script.is_file():
+        raise PipelineError(f"subagent evidence hook missing: {hook_script}")
+    event_dir = (
+        hook_event_dir
+        if hook_event_dir is not None
+        else trusted_root / "autonomy/state/subagent-events/command-preview"
+    ).resolve()
+    hook_command = (
+        subprocess.list2cmdline(
+            [sys.executable, str(hook_script.resolve()), "--output-dir", str(event_dir)]
+        )
+        if os.name == "nt"
+        else shlex.join(
+            [sys.executable, str(hook_script.resolve()), "--output-dir", str(event_dir)]
+        )
+    )
+    for event_name in ("SubagentStart", "SubagentStop"):
+        handler = (
+            '[{matcher=".*",hooks=[{type="command",'
+            f"command={json.dumps(hook_command)},"
+            f"command_windows={json.dumps(hook_command)},timeout=30}}]}}]"
+        )
+        overrides.extend(["-c", f"hooks.{event_name}={handler}"])
+    command[insertion_point:insertion_point] = overrides
+    return command
 
 
 def load_hypotheses(path: Path) -> tuple[dict[str, Any], list[Hypothesis]]:
@@ -110,10 +345,11 @@ def run(
     cwd: Path,
     timeout: int = 300,
     environment: dict[str, str] | None = None,
+    inherit_environment: bool = True,
     input_text: str | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
+    env = os.environ.copy() if inherit_environment else safe_subprocess_environment()
     env.update(environment or {})
     completed = subprocess.run(
         command,
@@ -121,6 +357,8 @@ def run(
         env=env,
         input=input_text,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=timeout,
     )
@@ -131,6 +369,40 @@ def run(
             f"stderr:\n{completed.stderr[-4000:]}"
         )
     return completed
+
+
+def safe_subprocess_environment() -> dict[str, str]:
+    """Return a small host environment without credentials or API tokens."""
+
+    allowlisted = {
+        "COMSPEC",
+        "LANG",
+        "LOCALAPPDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PATH",
+        "PATHEXT",
+        "PROCESSOR_ARCHITECTURE",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "WINDIR",
+    }
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowlisted
+    }
+
+
+def codex_cli_environment() -> dict[str, str]:
+    """Keep ChatGPT-managed auth discovery while excluding token-like secrets."""
+
+    environment = safe_subprocess_environment()
+    for key in ("APPDATA", "CODEX_HOME", "HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE"):
+        if key in os.environ:
+            environment[key] = os.environ[key]
+    return environment
 
 
 def git_output(args: Iterable[str], cwd: Path) -> str:
@@ -148,17 +420,324 @@ def assert_clean(root: Path) -> None:
         raise PipelineError("root worktree must be clean before autonomous execution")
 
 
+def tracked_tree_sha256(root: Path) -> str:
+    """Hash every tracked path's actual bytes, independent of index status flags."""
+
+    raw_paths = run(["git", "ls-files", "-z", "--"], cwd=root).stdout
+    digest = hashlib.sha256()
+    for relative in sorted(path for path in raw_paths.split("\0") if path):
+        path = root / relative
+        digest.update(relative.replace("\\", "/").encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(os.readlink(path).encode("utf-8"))
+        elif path.is_file():
+            digest.update(b"file\0")
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        else:
+            raise RootIntegrityError(f"tracked root path is missing or invalid: {relative}")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def capture_root_snapshot(root: Path) -> RootSnapshot:
+    baseline = root / "results/fabric_benchmark.json"
+    return RootSnapshot(
+        head=git_output(["rev-parse", "HEAD"], root),
+        status=git_output(["status", "--porcelain"], root),
+        tracked_tree_sha256=tracked_tree_sha256(root),
+        baseline_sha256=sha256_file(baseline),
+    )
+
+
+def assert_root_unchanged(root: Path, snapshot: RootSnapshot) -> None:
+    current = capture_root_snapshot(root)
+    differences = [
+        field
+        for field in ("head", "status", "tracked_tree_sha256", "baseline_sha256")
+        if getattr(current, field) != getattr(snapshot, field)
+    ]
+    if differences:
+        raise RootIntegrityError(
+            "trusted root changed during candidate execution: " + ", ".join(differences)
+        )
+
+
+@contextmanager
+def root_integrity_guard(
+    root: Path, snapshot: RootSnapshot | None
+) -> Iterator[None]:
+    try:
+        yield
+    finally:
+        if snapshot is not None:
+            assert_root_unchanged(root, snapshot)
+
+
+def project_root_model(root: Path) -> str:
+    config = root / ".codex/config.toml"
+    match = re.search(
+        r'^model\s*=\s*"([^"]+)"\s*$',
+        config.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if not match:
+        raise PipelineError(f"project config has no model: {config}")
+    return match.group(1)
+
+
+def project_agent_models(root: Path) -> dict[str, str]:
+    models: dict[str, str] = {}
+    for profile in sorted((root / ".codex" / "agents").glob("*.toml")):
+        content = profile.read_text(encoding="utf-8")
+        name_match = re.search(
+            r'^name\s*=\s*"([a-z0-9_]+)"\s*$', content, re.MULTILINE
+        )
+        model_match = re.search(
+            r'^model\s*=\s*"([^"]+)"\s*$',
+            content,
+            re.MULTILINE,
+        )
+        if not name_match or not model_match:
+            raise PipelineError(f"agent profile has incomplete routing metadata: {profile}")
+        name = name_match.group(1)
+        if name in models:
+            raise PipelineError(f"duplicate agent profile name: {name}")
+        models[name] = model_match.group(1)
+    return models
+
+
+def project_model_ids(root: Path) -> list[str]:
+    return sorted({project_root_model(root), *project_agent_models(root).values()})
+
+
+def preflight_report(
+    root: Path,
+    hypotheses: list[Hypothesis],
+    requested_codex: str,
+) -> dict[str, Any]:
+    """Inspect every local prerequisite and fail closed before live execution."""
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    try:
+        git_status = git_output(["status", "--porcelain"], root)
+        git_repository = True
+    except (PipelineError, OSError, subprocess.TimeoutExpired) as error:
+        git_status = ""
+        git_repository = False
+        blockers.append(f"git repository unavailable: {error}")
+    root_clean = git_repository and not git_status
+    if not root_clean:
+        blockers.append("root worktree must be clean before execute")
+
+    expected_venv = (root / ".venv").resolve()
+    running_python = Path(sys.executable).resolve()
+    try:
+        venv_ready = running_python.is_relative_to(expected_venv)
+    except ValueError:
+        venv_ready = False
+    if not venv_ready:
+        blockers.append(f"pipeline must run with the project venv: {running_python}")
+
+    required_files = [
+        root / "results/fabric_benchmark.json",
+        root / "autonomy/gates.json",
+        root / "autonomy/schemas/agent_result.schema.json",
+        root / ".codex/config.toml",
+    ]
+    missing_files = [str(path) for path in required_files if not path.is_file()]
+    if missing_files:
+        blockers.append("missing required files: " + ", ".join(missing_files))
+    baseline_sha256 = (
+        sha256_file(root / "results/fabric_benchmark.json")
+        if (root / "results/fabric_benchmark.json").is_file()
+        else None
+    )
+
+    unsupported = [
+        item.identifier for item in hypotheses if item.evaluator not in SUPPORTED_EVALUATORS
+    ]
+    if unsupported:
+        blockers.append(
+            "no automated evaluator configured for: " + ", ".join(unsupported)
+        )
+
+    runtime: CodexRuntime | None = None
+    login_detail = "not checked"
+    logged_in = False
+    command_compatible = False
+    catalog_models: list[str] = []
+    required_models: list[str] = []
+    model_catalog_ready = False
+    bootstrap_ready = False
+    try:
+        runtime = resolve_codex_runtime(requested_codex)
+        codex_environment = codex_cli_environment()
+        login = run(
+            [str(runtime.path), "login", "status"],
+            cwd=root,
+            timeout=30,
+            environment=codex_environment,
+            inherit_environment=False,
+            check=False,
+        )
+        login_detail = (login.stdout or login.stderr).strip()[-1000:]
+        logged_in = login.returncode == 0 and "logged in" in login_detail.lower()
+        if not logged_in:
+            blockers.append("Codex is not logged in for the current Windows user")
+
+        help_result = run(
+            [str(runtime.path), "exec", "--help"],
+            cwd=root,
+            timeout=30,
+            environment=codex_environment,
+            inherit_environment=False,
+            check=False,
+        )
+        required_options = (
+            "--strict-config",
+            "--json",
+            "--sandbox",
+            "--output-schema",
+            "--output-last-message",
+        )
+        command_compatible = help_result.returncode == 0 and all(
+            option in help_result.stdout for option in required_options
+        )
+        if not command_compatible:
+            blockers.append("Codex exec does not expose the required pipeline options")
+
+        model_result = run(
+            [str(runtime.path), "debug", "models"],
+            cwd=root,
+            timeout=30,
+            environment=codex_environment,
+            inherit_environment=False,
+            check=False,
+        )
+        if model_result.returncode == 0:
+            model_payload = json.loads(model_result.stdout)
+            catalog_models = sorted(
+                {
+                    str(item["slug"])
+                    for item in model_payload.get("models", [])
+                    if isinstance(item, dict) and item.get("slug")
+                }
+            )
+        required_models = project_model_ids(root)
+        missing_models = sorted(set(required_models) - set(catalog_models))
+        model_catalog_ready = bool(catalog_models) and not missing_models
+        if not model_catalog_ready:
+            blockers.append(
+                "configured Codex model(s) unavailable: "
+                + (", ".join(missing_models) if missing_models else "catalog unreadable")
+            )
+
+        bootstrap_probe = build_codex_exec_command(
+            runtime,
+            schema_path=root / "autonomy/schemas/agent_result.schema.json",
+            result_path=Path("autonomy/state/preflight-agent-result.json"),
+            project_root=root,
+            trusted_root=root,
+        )
+        bootstrap_probe[-1] = "--help"
+        bootstrap_result = run(
+            bootstrap_probe,
+            cwd=root,
+            timeout=30,
+            environment=codex_environment,
+            inherit_environment=False,
+            check=False,
+        )
+        bootstrap_ready = bootstrap_result.returncode == 0
+        if not bootstrap_ready:
+            blockers.append(
+                "explicit Codex agent bootstrap was rejected: "
+                + bootstrap_result.stderr.strip()[-1000:]
+            )
+    except (PipelineError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        blockers.append(f"Codex runtime preflight failed: {error}")
+
+    dry_run_requirements = (
+        git_repository,
+        venv_ready,
+        not missing_files,
+        runtime is not None,
+        command_compatible,
+        model_catalog_ready,
+        bootstrap_ready,
+    )
+    ready_for_dry_run = all(dry_run_requirements)
+    ready_for_execute = ready_for_dry_run and root_clean and logged_in and not unsupported
+    if ready_for_dry_run and not ready_for_execute:
+        warnings.append("dry-run is available, but live execute remains blocked")
+    return {
+        "mode": "preflight",
+        "timestamp": now(),
+        "root": str(root),
+        "python": str(running_python),
+        "project_venv": venv_ready,
+        "git_repository": git_repository,
+        "root_clean": root_clean,
+        "baseline_sha256": baseline_sha256,
+        "codex": (
+            {"path": str(runtime.path), "version": runtime.version}
+            if runtime is not None
+            else None
+        ),
+        "logged_in": logged_in,
+        "login_detail": login_detail,
+        "command_compatible": command_compatible,
+        "agent_bootstrap": "explicit-cli-overrides",
+        "bootstrap_ready": bootstrap_ready,
+        "required_models": required_models,
+        "catalog_models": catalog_models,
+        "model_catalog_ready": model_catalog_ready,
+        "selected_hypotheses": [item.identifier for item in hypotheses],
+        "unsupported_hypotheses": unsupported,
+        "ready_for_dry_run": ready_for_dry_run,
+        "ready_for_execute": ready_for_execute,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
 def slug(identifier: str) -> str:
-    return "".join(character.lower() if character.isalnum() else "-" for character in identifier).strip("-")
+    return "".join(
+        character.lower() if character.isalnum() else "-" for character in identifier
+    ).strip("-")
 
 
 def prompt_for(hypothesis: Hypothesis, baseline_digest: str) -> str:
-    allowed = "\n".join(f"- {item}" for item in hypothesis.allowed_files)
+    allowed_rules = (
+        *hypothesis.allowed_files,
+        "results/candidate_benchmark.json",
+        "results/candidate_benchmark.csv",
+        "results/candidate_benchmark.png",
+        f"results/experiments/{hypothesis.identifier}/",
+    )
+    allowed = "\n".join(f"- {item}" for item in allowed_rules)
     controls = "\n".join(f"- {item}" for item in hypothesis.controls)
+    experiment_contract = {
+        "schema_version": 1,
+        "hypothesis_id": hypothesis.identifier,
+        "baseline_sha256": baseline_digest,
+        "independent_variable": "Describe the one candidate change being tested.",
+        "controls": list(hypothesis.controls),
+        "split_discipline": "Describe fit/selection/calibration and held-out data boundaries.",
+        "primary_metric": hypothesis.primary_metric,
+        "stopping_rule": "State when implementation/search stops.",
+        "disconfirming_condition": hypothesis.disconfirming_condition,
+    }
     return f"""You are the root research agent for hypothesis {hypothesis.identifier}.
 
-Read AGENTS.md and use the focus-research skill. Spawn research_scout and
-memory_redteam first, wait for both, then use architecture_scientist. Use
+Read AGENTS.md and follow this preregistered research protocol. Spawn
+research_scout and memory_redteam first, wait for both, then use
+architecture_scientist. Use
 kernel_engineer only if a tested reference requires a GPU path. After changes,
 spawn benchmark_adversary, reproducibility_auditor, and claim_auditor. Preserve
 negative results.
@@ -185,54 +764,156 @@ BASELINE ARTIFACT SHA-256
 {baseline_digest}
 
 Requirements:
-1. Create `autonomy/state/{hypothesis.identifier}.experiment.json` before code
-   changes with independent variable, controls, split discipline, metrics,
-   stopping rule, and disconfirming threshold.
+1. Create `results/experiments/{hypothesis.identifier}/experiment.json` before code
+   changes. Preserve these exact keys and declared values, replacing only the
+   three instructional descriptions with concrete non-empty text:
+{json.dumps(experiment_contract, indent=2, ensure_ascii=False)}
 2. Do not modify files outside allowed prefixes except the experiment record
    and candidate result artifacts.
-3. Run `make gate`. Do not weaken gates or edit baseline results.
-4. Finish with structured JSON matching the supplied schema. Include failures,
-   risks, negative results, and exact evidence paths.
+3. Do not commit, amend, rebase, or otherwise change Git history. The outer
+   orchestrator owns history and promotion.
+4. Run `make gate`. Do not weaken gates or edit baseline results.
+5. Finish with structured JSON matching the supplied schema. Include failures,
+   risks, negative results, and exact evidence paths. `changed_files` must list
+   every Git-observed changed path exactly, including the experiment record and
+   candidate benchmark, but not the orchestrator-owned `autonomy/state/` files.
 """
 
 
+def normalize_repo_path(path: str) -> str:
+    raw = str(path).replace("\\", "/")
+    if not raw or raw.startswith("/") or re.match(r"^[A-Za-z]:/", raw):
+        raise PipelineError(f"unsafe repository path: {path}")
+    parts = raw.split("/")
+    if ".." in parts:
+        raise PipelineError(f"unsafe repository path: {path}")
+    normalized = "/".join(part for part in parts if part not in {"", "."})
+    if not normalized:
+        raise PipelineError(f"unsafe repository path: {path}")
+    return normalized
+
+
 def path_allowed(path: str, hypothesis: Hypothesis) -> bool:
-    always = (
-        f"autonomy/state/{hypothesis.identifier}.",
-        "results/candidate_",
-        "results/experiments/",
+    try:
+        normalized = normalize_repo_path(path)
+    except PipelineError:
+        return False
+    rules = (
+        *hypothesis.allowed_files,
+        "results/candidate_benchmark.json",
+        "results/candidate_benchmark.csv",
+        "results/candidate_benchmark.png",
+        f"results/experiments/{hypothesis.identifier}/",
     )
-    prefixes = (*hypothesis.allowed_files, *always)
-    return any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in prefixes)
+    for rule in rules:
+        normalized_rule = rule.replace("\\", "/")
+        if normalized_rule.endswith("/"):
+            if normalized.startswith(normalized_rule):
+                return True
+        elif normalized == normalized_rule:
+            return True
+    return False
 
 
 def changed_files(worktree: Path) -> list[str]:
-    output = git_output(["status", "--porcelain"], worktree)
-    paths: list[str] = []
-    for line in output.splitlines():
-        if not line:
-            continue
-        value = line[3:]
-        if " -> " in value:
-            value = value.split(" -> ", 1)[1]
-        paths.append(value)
-    return sorted(paths)
+    tracked = git_output(
+        ["diff", "--name-only", "--no-renames", "HEAD", "--"], worktree
+    )
+    untracked = git_output(
+        ["ls-files", "--others", "--exclude-standard", "--"], worktree
+    )
+    return sorted(
+        {
+            item.replace("\\", "/")
+            for output in (tracked, untracked)
+            for item in output.splitlines()
+            if item.strip()
+        }
+    )
 
 
-def run_gates(worktree: Path, ledger: EventLedger) -> list[dict[str, Any]]:
-    gate_config = json.loads((worktree / "autonomy/gates.json").read_text(encoding="utf-8"))
+def validate_candidate_state(
+    worktree: Path,
+    hypothesis: Hypothesis,
+    start_head: str,
+) -> list[str]:
+    current_head = git_output(["rev-parse", "HEAD"], worktree)
+    if current_head != start_head:
+        raise PipelineError(
+            f"candidate changed Git history: start={start_head}, current={current_head}"
+        )
+    changes = changed_files(worktree)
+    forbidden = [path for path in changes if not path_allowed(path, hypothesis)]
+    if forbidden:
+        raise PipelineError("candidate changed forbidden paths: " + ", ".join(forbidden))
+    return changes
+
+
+def existing_tracked_test_changes(root: Path, changes: list[str]) -> list[str]:
+    tracked_tests = set(
+        git_output(["ls-files", "--", "tests"], root).splitlines()
+    )
+    return sorted(path for path in changes if path in tracked_tests)
+
+
+def pinned_python_command(command: list[str]) -> list[str]:
+    if not command:
+        raise PipelineError("gate command must not be empty")
+    executable = command[0].lower()
+    if executable in {"python", "python3", "py"}:
+        return [sys.executable, *command[1:]]
+    if executable in {"pytest", "pytest.exe"}:
+        return [sys.executable, "-m", "pytest", *command[1:]]
+    raise PipelineError(f"gate executable is not allowlisted: {command[0]}")
+
+
+def run_gates(
+    worktree: Path,
+    ledger: EventLedger,
+    trusted_root: Path,
+    root_snapshot: RootSnapshot | None = None,
+) -> list[dict[str, Any]]:
+    gate_config = json.loads(
+        (trusted_root / "autonomy/gates.json").read_text(encoding="utf-8")
+    )
+    runtime_tmp = worktree / "autonomy/state/tmp"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    matplotlib_config = worktree / "autonomy/state/matplotlib"
+    matplotlib_config.mkdir(parents=True, exist_ok=True)
     reports: list[dict[str, Any]] = []
     for gate in gate_config["commands"]:
-        completed = run(
-            list(gate["command"]),
-            cwd=worktree,
-            timeout=int(gate.get("timeout_seconds", 300)),
-            environment={str(k): str(v) for k, v in gate.get("environment", {}).items()},
-            check=False,
-        )
+        requested_command = [str(item) for item in gate["command"]]
+        command = pinned_python_command(requested_command)
+        if gate["name"] == "cpu-evidence":
+            for suffix in ("json", "csv", "png"):
+                (worktree / f"results/candidate_benchmark.{suffix}").unlink(
+                    missing_ok=True
+                )
+        if command[1:3] == ["-m", "pytest"] and "--basetemp" not in command:
+            command.extend(
+                ["--basetemp", str(worktree / "autonomy/state/pytest-candidate")]
+            )
+        environment = {
+            str(k): str(v) for k, v in gate.get("environment", {}).items()
+        }
+        environment["PYTHONPATH"] = str(worktree / "src")
+        environment["TEMP"] = str(runtime_tmp)
+        environment["TMP"] = str(runtime_tmp)
+        environment["MPLBACKEND"] = "Agg"
+        environment["MPLCONFIGDIR"] = str(matplotlib_config)
+        with root_integrity_guard(trusted_root, root_snapshot):
+            completed = run(
+                command,
+                cwd=worktree,
+                timeout=int(gate.get("timeout_seconds", 300)),
+                environment=environment,
+                inherit_environment=False,
+                check=False,
+            )
         report = {
             "name": gate["name"],
-            "command": gate["command"],
+            "requested_command": requested_command,
+            "command": command,
             "returncode": completed.returncode,
             "stdout_tail": completed.stdout[-4000:],
             "stderr_tail": completed.stderr[-4000:],
@@ -244,56 +925,372 @@ def run_gates(worktree: Path, ledger: EventLedger) -> list[dict[str, Any]]:
     return reports
 
 
-def deep_get(payload: dict[str, Any], path: str) -> Any:
-    current: Any = payload
-    for component in path.split("."):
-        current = current[component]
-    return current
+def run_trusted_root_tests(
+    root: Path,
+    worktree: Path,
+    ledger: EventLedger,
+    root_snapshot: RootSnapshot | None = None,
+) -> dict[str, Any]:
+    """Run the immutable root test suite against the candidate source tree."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-c",
+        str(root / "pyproject.toml"),
+        str(root / "tests"),
+        "--basetemp",
+        str(worktree / "autonomy/state/pytest-trusted"),
+    ]
+    runtime_tmp = worktree / "autonomy/state/tmp"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    with root_integrity_guard(root, root_snapshot):
+        completed = run(
+            command,
+            cwd=worktree,
+            timeout=1200,
+            environment={
+                "PYTHONPATH": str(worktree / "src"),
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "TEMP": str(runtime_tmp),
+                "TMP": str(runtime_tmp),
+            },
+            inherit_environment=False,
+            check=False,
+        )
+    report = {
+        "name": "trusted-root-tests",
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout_tail": completed.stdout[-4000:],
+        "stderr_tail": completed.stderr[-4000:],
+    }
+    ledger.append("gate.completed", report)
+    return report
 
 
-def evidence_score(payload: dict[str, Any]) -> float:
-    synthetic = payload["synthetic"]
-    id_metrics = synthetic["splits"]["in_distribution"]["fabric_approx"]
-    shift = synthetic["splits"]["distribution_shift"]["fabric_guarded"]
-    memory = synthetic["memory"]
-    end = payload["end_to_end"]["teacher_forced"]
-    rate = memory["fabric_active_bytes"] / memory["full_exact_bytes"]
-    disagreement = 1.0 - end["argmax_token_agreement"]
-    return (
-        float(id_metrics["output_nmse"])
-        + 0.25 * float(shift["output_nmse"])
-        + 0.04 * float(rate)
-        + 10.0 * disagreement
+def validate_agent_result(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise PipelineError(f"agent result missing: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    required_types: dict[str, type] = {
+        "status": str,
+        "summary": str,
+        "changed_files": list,
+        "evidence": list,
+        "risks": list,
+        "negative_results": list,
+        "next_hypotheses": list,
+    }
+    missing = [key for key in required_types if key not in payload]
+    if missing:
+        raise PipelineError(f"agent result missing required field(s): {', '.join(missing)}")
+    extra = sorted(set(payload) - set(required_types))
+    if extra:
+        raise PipelineError(f"agent result has unexpected field(s): {', '.join(extra)}")
+    for key, expected_type in required_types.items():
+        if not isinstance(payload[key], expected_type):
+            raise PipelineError(f"agent result field has wrong type: {key}")
+    for key in (
+        "changed_files",
+        "evidence",
+        "risks",
+        "negative_results",
+        "next_hypotheses",
+    ):
+        if not all(isinstance(item, str) for item in payload[key]):
+            raise PipelineError(f"agent result field must contain only strings: {key}")
+    if payload["status"] not in {"completed", "failed", "blocked"}:
+        raise PipelineError(f"agent result has invalid status: {payload['status']}")
+    return payload
+
+
+def validate_reported_changes(
+    payload: dict[str, Any],
+    actual_changes: list[str],
+) -> None:
+    reported = {normalize_repo_path(str(item)) for item in payload["changed_files"]}
+    actual = {normalize_repo_path(item) for item in actual_changes}
+    reported = {item for item in reported if not item.startswith("autonomy/state/")}
+    actual = {item for item in actual if not item.startswith("autonomy/state/")}
+    if reported != actual:
+        missing = sorted(actual - reported)
+        overstated = sorted(reported - actual)
+        raise PipelineError(
+            "agent changed_files does not match Git: "
+            f"unreported={missing}, not_changed={overstated}"
+        )
+
+
+def validate_experiment_contract(
+    worktree: Path,
+    hypothesis: Hypothesis,
+    baseline_digest: str,
+) -> dict[str, Any]:
+    path = (
+        worktree
+        / "results"
+        / "experiments"
+        / hypothesis.identifier
+        / "experiment.json"
     )
+    if not path.is_file():
+        raise PipelineError(f"experiment contract missing: {path.relative_to(worktree)}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise PipelineError("experiment contract must be a JSON object")
+    required = {
+        "schema_version",
+        "hypothesis_id",
+        "baseline_sha256",
+        "independent_variable",
+        "controls",
+        "split_discipline",
+        "primary_metric",
+        "stopping_rule",
+        "disconfirming_condition",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        raise PipelineError("experiment contract missing field(s): " + ", ".join(missing))
+    exact_values = {
+        "schema_version": 1,
+        "hypothesis_id": hypothesis.identifier,
+        "baseline_sha256": baseline_digest,
+        "controls": list(hypothesis.controls),
+        "primary_metric": hypothesis.primary_metric,
+        "disconfirming_condition": hypothesis.disconfirming_condition,
+    }
+    mismatched = [
+        key for key, expected in exact_values.items() if payload.get(key) != expected
+    ]
+    if mismatched:
+        raise PipelineError(
+            "experiment contract changed preregistered field(s): " + ", ".join(mismatched)
+        )
+    for key in ("independent_variable", "split_discipline", "stopping_rule"):
+        if not isinstance(payload.get(key), str) or not payload[key].strip():
+            raise PipelineError(f"experiment contract field must be non-empty text: {key}")
+    return payload
 
 
-def compare_candidate(root: Path, worktree: Path) -> dict[str, Any]:
+def subagent_role_evidence(
+    event_dir: Path,
+    expected_models: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Verify role, model, start, and stop from orchestrator-owned hook records."""
+
+    records: list[dict[str, Any]] = []
+    for path in sorted(event_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+
+    report: dict[str, dict[str, Any]] = {}
+    for role, expected_model in sorted(expected_models.items()):
+        role_records = [item for item in records if item.get("agent_type") == role]
+        agent_ids = {str(item.get("agent_id", "")) for item in role_records}
+        completed_ids: list[str] = []
+        completed_models: set[str] = set()
+        for agent_id in sorted(agent_ids):
+            lifecycle = {
+                str(item.get("hook_event_name", ""))
+                for item in role_records
+                if str(item.get("agent_id", "")) == agent_id
+            }
+            models = {
+                str(item.get("model", ""))
+                for item in role_records
+                if str(item.get("agent_id", "")) == agent_id
+            }
+            if {"SubagentStart", "SubagentStop"}.issubset(lifecycle):
+                completed_ids.append(agent_id)
+                completed_models.update(models)
+        model_routed = bool(completed_ids) and completed_models == {expected_model}
+        report[role] = {
+            "expected_model": expected_model,
+            "completed_agent_ids": completed_ids,
+            "observed_models": sorted(completed_models),
+            "model_routed": model_routed,
+            "passed": bool(completed_ids and model_routed),
+        }
+    return report
+
+
+def compare_candidate(
+    root: Path,
+    worktree: Path,
+    hypothesis: Hypothesis,
+) -> dict[str, Any]:
+    if hypothesis.evaluator != "fabric_benchmark_v1":
+        return {
+            "passed": False,
+            "reason": f"no automated evaluator configured: {hypothesis.evaluator or 'none'}",
+            "primary_metric": hypothesis.primary_metric,
+        }
     baseline_path = root / "results/fabric_benchmark.json"
     candidate_path = worktree / "results/candidate_benchmark.json"
     if not candidate_path.exists():
         return {"passed": False, "reason": "candidate benchmark missing"}
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-    baseline_score = evidence_score(baseline)
-    candidate_score = evidence_score(candidate)
-    baseline_agreement = baseline["end_to_end"]["teacher_forced"]["argmax_token_agreement"]
-    candidate_agreement = candidate["end_to_end"]["teacher_forced"]["argmax_token_agreement"]
-    candidate_free = candidate["end_to_end"]["free_running"]["sequence_agreement"]
+    try:
+        baseline_metric_value = baseline["synthetic"]["splits"]["in_distribution"][
+            "fabric_approx"
+        ]["output_nmse"]
+        candidate_metric_value = candidate["synthetic"]["splits"]["in_distribution"][
+            "fabric_approx"
+        ]["output_nmse"]
+        baseline_bytes_value = baseline["synthetic"]["memory"]["fabric_active_bytes"]
+        candidate_bytes_value = candidate["synthetic"]["memory"]["fabric_active_bytes"]
+        baseline_agreement_value = baseline["end_to_end"]["teacher_forced"][
+            "argmax_token_agreement"
+        ]
+        candidate_agreement_value = candidate["end_to_end"]["teacher_forced"][
+            "argmax_token_agreement"
+        ]
+        candidate_free = candidate["end_to_end"]["free_running"]["sequence_agreement"]
+        invalid_outputs_value = candidate["repeated_compaction"]["final"][
+            "invalid_codec_outputs"
+        ]
+    except (KeyError, TypeError) as error:
+        raise PipelineError(f"benchmark artifact has invalid shape: {error}") from error
+
+    baseline_metric = finite_number(
+        baseline_metric_value, "baseline output_nmse", minimum=0.0
+    )
+    candidate_metric = finite_number(
+        candidate_metric_value, "candidate output_nmse", minimum=0.0
+    )
+    baseline_active_bytes = exact_nonnegative_integer(
+        baseline_bytes_value, "baseline fabric_active_bytes"
+    )
+    candidate_active_bytes = exact_nonnegative_integer(
+        candidate_bytes_value, "candidate fabric_active_bytes"
+    )
+    if baseline_active_bytes == 0 or candidate_active_bytes == 0:
+        raise PipelineError("fabric_active_bytes must be positive")
+    active_bytes_matched = candidate_active_bytes == baseline_active_bytes
+    baseline_agreement = finite_number(
+        baseline_agreement_value,
+        "baseline argmax_token_agreement",
+        minimum=0.0,
+        maximum=1.0,
+    )
+    candidate_agreement = finite_number(
+        candidate_agreement_value,
+        "candidate argmax_token_agreement",
+        minimum=0.0,
+        maximum=1.0,
+    )
+    if not isinstance(candidate_free, bool):
+        raise PipelineError("candidate sequence_agreement must be a boolean")
+    invalid_outputs = exact_nonnegative_integer(
+        invalid_outputs_value, "candidate invalid_codec_outputs"
+    )
     hard_pass = (
         candidate_agreement + 1e-12 >= baseline_agreement
-        and bool(candidate_free)
-        and candidate["repeated_compaction"]["final"]["invalid_codec_outputs"] == 0
+        and candidate_free is True
+        and invalid_outputs == 0
     )
-    relative_improvement = (baseline_score - candidate_score) / max(abs(baseline_score), 1e-12)
+    relative_improvement = (baseline_metric - candidate_metric) / max(
+        abs(baseline_metric), 1e-12
+    )
     return {
-        "passed": bool(hard_pass and relative_improvement >= 0.005),
+        "passed": bool(hard_pass and active_bytes_matched and relative_improvement >= 0.05),
         "hard_safety_passed": bool(hard_pass),
-        "baseline_score": baseline_score,
-        "candidate_score": candidate_score,
+        "primary_metric": hypothesis.primary_metric,
+        "baseline_metric": baseline_metric,
+        "candidate_metric": candidate_metric,
         "relative_improvement": relative_improvement,
+        "baseline_active_bytes": baseline_active_bytes,
+        "candidate_active_bytes": candidate_active_bytes,
+        "active_bytes_matched": active_bytes_matched,
         "baseline_sha256": sha256_file(baseline_path),
         "candidate_sha256": sha256_file(candidate_path),
     }
+
+
+def write_public_orchestrator_result(path: Path, result: dict[str, Any]) -> None:
+    """Write candidate evidence without claiming an outer merge already happened."""
+
+    public_keys = {
+        "hypothesis",
+        "status",
+        "branch",
+        "agent_changed_files",
+        "changed_files",
+        "role_evidence",
+        "promotion_requested",
+        "promotion_eligible",
+        "promotion_blocked",
+        "protected_test_changes",
+    }
+    public_result = {
+        key: value
+        for key, value in result.items()
+        if key in public_keys
+    }
+    public_result["gates"] = [
+        {
+            "name": report.get("name"),
+            "requested_command": report.get("requested_command"),
+            "returncode": report.get("returncode"),
+        }
+        for report in result.get("gates", [])
+    ]
+    holdout_keys = {
+        "passed",
+        "reason",
+        "seed",
+        "baseline_objective",
+        "candidate_objective",
+        "relative_change",
+        "candidate_artifact",
+        "candidate_sha256",
+        "baseline_artifact",
+        "baseline_sha256",
+        "baseline_safety_passed",
+        "candidate_safety_passed",
+        "baseline_returncode",
+        "candidate_returncode",
+        "tolerance",
+    }
+    public_result["holdout"] = {
+        key: value
+        for key, value in result.get("holdout", {}).items()
+        if key in holdout_keys
+    }
+    comparison_keys = {
+        "passed",
+        "reason",
+        "hard_safety_passed",
+        "primary_metric",
+        "baseline_metric",
+        "candidate_metric",
+        "relative_improvement",
+        "baseline_active_bytes",
+        "candidate_active_bytes",
+        "active_bytes_matched",
+        "baseline_sha256",
+        "candidate_sha256",
+        "holdout_blocked",
+    }
+    public_result["comparison"] = {
+        key: value
+        for key, value in result.get("comparison", {}).items()
+        if key in comparison_keys
+    }
+    public_result["promotion_outcome_scope"] = (
+        "Actual commit/merge outcome is recorded only in the parent run report and ledger."
+    )
+    path.write_text(json.dumps(public_result, indent=2), encoding="utf-8")
 
 
 def run_external_holdout(
@@ -301,24 +1298,28 @@ def run_external_holdout(
     worktree: Path,
     hypothesis: Hypothesis,
     ledger: EventLedger,
+    root_snapshot: RootSnapshot | None = None,
 ) -> dict[str, Any]:
     """Evaluate root and candidate code on the same post-hoc random cases."""
 
     seed = secrets.randbits(31)
     evaluator = root / "scripts/autonomy/holdout_evaluator.py"
-    candidate_output = (
-        worktree / "results/experiments" / hypothesis.identifier / "holdout.json"
-    )
-    candidate_output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="focus-holdout-") as temporary:
-        baseline_output = Path(temporary) / "baseline.json"
-        environment = {
-            "OMP_NUM_THREADS": "1",
-            "MKL_NUM_THREADS": "1",
-            # The evaluator prepends --source itself; an inherited PYTHONPATH
-            # must not accidentally import the root package for the candidate.
-            "PYTHONPATH": "",
-        }
+    evidence_dir = worktree / "results/experiments" / hypothesis.identifier
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    baseline_output = evidence_dir / "holdout-baseline.json"
+    candidate_output = evidence_dir / "holdout-candidate.json"
+    baseline_output.unlink(missing_ok=True)
+    candidate_output.unlink(missing_ok=True)
+    runtime_tmp = worktree / "autonomy/state/tmp"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    environment = {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "PYTHONPATH": "",
+        "TEMP": str(runtime_tmp),
+        "TMP": str(runtime_tmp),
+    }
+    with root_integrity_guard(root, root_snapshot):
         baseline_run = run(
             [
                 sys.executable,
@@ -335,8 +1336,10 @@ def run_external_holdout(
             cwd=root,
             timeout=900,
             environment=environment,
+            inherit_environment=False,
             check=False,
         )
+    with root_integrity_guard(root, root_snapshot):
         candidate_run = run(
             [
                 sys.executable,
@@ -353,21 +1356,42 @@ def run_external_holdout(
             cwd=worktree,
             timeout=900,
             environment=environment,
+            inherit_environment=False,
             check=False,
         )
-        if not baseline_output.exists() or not candidate_output.exists():
-            report = {
-                "passed": False,
-                "reason": "holdout evaluator did not produce both artifacts",
-                "baseline_returncode": baseline_run.returncode,
-                "candidate_returncode": candidate_run.returncode,
-            }
-            ledger.append("holdout.failed", report)
-            return report
-        baseline = json.loads(baseline_output.read_text(encoding="utf-8"))
-        candidate = json.loads(candidate_output.read_text(encoding="utf-8"))
-    baseline_objective = float(baseline["objective"])
-    candidate_objective = float(candidate["objective"])
+    if (
+        baseline_run.returncode != 0
+        or candidate_run.returncode != 0
+        or not baseline_output.exists()
+        or not candidate_output.exists()
+    ):
+        report = {
+            "passed": False,
+            "reason": "holdout evaluator failed or did not produce fresh artifacts",
+            "baseline_returncode": baseline_run.returncode,
+            "candidate_returncode": candidate_run.returncode,
+            "baseline_stderr_tail": baseline_run.stderr[-1000:],
+            "candidate_stderr_tail": candidate_run.stderr[-1000:],
+        }
+        ledger.append("holdout.failed", report)
+        return report
+    baseline = json.loads(baseline_output.read_text(encoding="utf-8"))
+    candidate = json.loads(candidate_output.read_text(encoding="utf-8"))
+    try:
+        baseline_objective_value = baseline["objective"]
+        candidate_objective_value = candidate["objective"]
+    except (KeyError, TypeError) as error:
+        raise PipelineError(f"holdout artifact has invalid shape: {error}") from error
+    baseline_objective = finite_number(
+        baseline_objective_value, "baseline holdout objective", minimum=0.0
+    )
+    candidate_objective = finite_number(
+        candidate_objective_value, "candidate holdout objective", minimum=0.0
+    )
+    baseline_safety = baseline.get("passed")
+    candidate_safety = candidate.get("passed")
+    if not isinstance(baseline_safety, bool) or not isinstance(candidate_safety, bool):
+        raise PipelineError("holdout passed fields must be booleans")
     # The randomized holdout is a non-regression gate.  The public benchmark
     # supplies the improvement requirement; the post-hoc cases prevent a
     # narrowly overfit improvement from being promoted.
@@ -376,8 +1400,8 @@ def run_external_holdout(
     )
     report = {
         "passed": bool(
-            baseline.get("passed")
-            and candidate.get("passed")
+            baseline_safety is True
+            and candidate_safety is True
             and relative_change <= 0.02
         ),
         "seed": seed,
@@ -386,8 +1410,12 @@ def run_external_holdout(
         "relative_change": relative_change,
         "candidate_artifact": str(candidate_output.relative_to(worktree)),
         "candidate_sha256": sha256_file(candidate_output),
-        "baseline_safety_passed": bool(baseline.get("passed")),
-        "candidate_safety_passed": bool(candidate.get("passed")),
+        "baseline_artifact": str(baseline_output.relative_to(worktree)),
+        "baseline_sha256": sha256_file(baseline_output),
+        "baseline_safety_passed": baseline_safety,
+        "candidate_safety_passed": candidate_safety,
+        "baseline_returncode": baseline_run.returncode,
+        "candidate_returncode": candidate_run.returncode,
         "tolerance": "candidate objective may regress by at most 2% on randomized holdout",
     }
     ledger.append("holdout.completed", report)
@@ -403,29 +1431,31 @@ def acquire_lock(path: Path) -> int:
     return descriptor
 
 
-def dry_run_plan(root: Path, hypotheses: list[Hypothesis], codex: str) -> dict[str, Any]:
+def dry_run_plan(
+    root: Path,
+    hypotheses: list[Hypothesis],
+    runtime: CodexRuntime,
+) -> dict[str, Any]:
     baseline = root / "results/fabric_benchmark.json"
     digest = sha256_file(baseline) if baseline.exists() else "MISSING"
     plans = []
     for hypothesis in hypotheses:
+        result_path = Path(
+            f"autonomy/state/runs/{hypothesis.identifier}/agent-result.json"
+        )
         plans.append(
             {
                 "hypothesis": hypothesis.identifier,
                 "branch": f"autonomy/{slug(hypothesis.identifier)}-TIMESTAMP",
-                "codex_command": [
-                    codex,
-                    "exec",
-                    "--json",
-                    "--sandbox",
-                    "workspace-write",
-                    "--ask-for-approval",
-                    "never",
-                    "--output-schema",
-                    "autonomy/schemas/agent_result.schema.json",
-                    "--output-last-message",
-                    f"results/experiments/{hypothesis.identifier}/agent-result.json",
-                    "-",
-                ],
+                "codex_command": build_codex_exec_command(
+                    runtime,
+                    schema_path=root / "autonomy/schemas/agent_result.schema.json",
+                    result_path=result_path,
+                    project_root=root,
+                    trusted_root=root,
+                ),
+                "automated_evaluator": hypothesis.evaluator,
+                "executable": hypothesis.evaluator in SUPPORTED_EVALUATORS,
                 "prompt_sha256": hashlib.sha256(
                     prompt_for(hypothesis, digest).encode("utf-8")
                 ).hexdigest(),
@@ -434,24 +1464,47 @@ def dry_run_plan(root: Path, hypotheses: list[Hypothesis], codex: str) -> dict[s
                 "external_holdout": {
                     "evaluator": "scripts/autonomy/holdout_evaluator.py",
                     "seed_timing": "generated after the Codex run",
-                    "policy": "candidate safety must pass and randomized objective may regress by at most 2% versus root baseline"
+                    "policy": (
+                        "candidate safety must pass and randomized objective may regress "
+                        "by at most 2% versus root baseline"
+                    ),
                 },
             }
         )
     return {
         "mode": "dry-run",
         "timestamp": now(),
-        "codex_available": shutil.which(codex) is not None,
+        "codex": {"path": str(runtime.path), "version": runtime.version},
         "baseline_sha256": digest,
         "plans": plans,
     }
+
+
+def root_integrity_failure(
+    error: RootIntegrityError,
+    *,
+    hypothesis: Hypothesis,
+    branch: str,
+    worktree: Path,
+    ledger: EventLedger,
+) -> dict[str, Any]:
+    result = {
+        "hypothesis": hypothesis.identifier,
+        "status": "root_integrity_failed",
+        "branch": branch,
+        "worktree": str(worktree),
+        "error": str(error),
+        "promoted": False,
+    }
+    ledger.append("root_integrity.failed", result)
+    return result
 
 
 def execute_one(
     root: Path,
     hypothesis: Hypothesis,
     *,
-    codex: str,
+    runtime: CodexRuntime,
     worktree_root: Path,
     auto_promote: bool,
     ledger: EventLedger,
@@ -461,31 +1514,53 @@ def execute_one(
     worktree = worktree_root / f"{slug(hypothesis.identifier)}-{timestamp}"
     baseline = root / "results/fabric_benchmark.json"
     baseline_digest = sha256_file(baseline)
+    root_snapshot = capture_root_snapshot(root)
     run(["git", "worktree", "add", "-b", branch, str(worktree), "HEAD"], cwd=root)
+    start_head = git_output(["rev-parse", "HEAD"], worktree)
     experiment_dir = worktree / "results" / "experiments" / hypothesis.identifier
     experiment_dir.mkdir(parents=True, exist_ok=True)
-    event_path = experiment_dir / "codex-events.jsonl"
-    result_path = experiment_dir / "agent-result.json"
+    private_run_dir = worktree / "autonomy" / "state" / "runs" / hypothesis.identifier
+    private_run_dir.mkdir(parents=True, exist_ok=True)
+    event_path = private_run_dir / "codex-events.jsonl"
+    result_path = private_run_dir / "agent-result.json"
+    hook_event_dir = (
+        root
+        / "autonomy/state/subagent-events"
+        / f"{slug(hypothesis.identifier)}-{timestamp}-{secrets.token_hex(8)}"
+    )
+    hook_event_dir.mkdir(parents=True, exist_ok=False)
     prompt = prompt_for(hypothesis, baseline_digest)
-    command = [
-        codex,
-        "exec",
-        "--json",
-        "--sandbox",
-        "workspace-write",
-        "--ask-for-approval",
-        "never",
-        "--output-schema",
-        "autonomy/schemas/agent_result.schema.json",
-        "--output-last-message",
-        str(result_path.relative_to(worktree)),
-        "-",
-    ]
+    command = build_codex_exec_command(
+        runtime,
+        schema_path=worktree / "autonomy/schemas/agent_result.schema.json",
+        result_path=result_path.relative_to(worktree),
+        project_root=worktree,
+        trusted_root=root,
+        hook_event_dir=hook_event_dir,
+    )
     ledger.append(
         "codex.started",
         {"hypothesis": hypothesis.identifier, "branch": branch, "worktree": str(worktree)},
     )
-    completed = run(command, cwd=worktree, timeout=7200, input_text=prompt, check=False)
+    try:
+        with root_integrity_guard(root, root_snapshot):
+            completed = run(
+                command,
+                cwd=worktree,
+                timeout=7200,
+                environment=codex_cli_environment(),
+                inherit_environment=False,
+                input_text=prompt,
+                check=False,
+            )
+    except RootIntegrityError as error:
+        return root_integrity_failure(
+            error,
+            hypothesis=hypothesis,
+            branch=branch,
+            worktree=worktree,
+            ledger=ledger,
+        )
     event_path.write_text(completed.stdout, encoding="utf-8")
     ledger.append(
         "codex.completed",
@@ -496,6 +1571,16 @@ def execute_one(
             "stderr_tail": completed.stderr[-2000:],
         },
     )
+    try:
+        assert_root_unchanged(root, root_snapshot)
+    except RootIntegrityError as error:
+        return root_integrity_failure(
+            error,
+            hypothesis=hypothesis,
+            branch=branch,
+            worktree=worktree,
+            ledger=ledger,
+        )
     if completed.returncode:
         return {
             "hypothesis": hypothesis.identifier,
@@ -504,28 +1589,175 @@ def execute_one(
             "worktree": str(worktree),
             "returncode": completed.returncode,
         }
-    changes = changed_files(worktree)
-    forbidden = [path for path in changes if not path_allowed(path, hypothesis)]
-    if forbidden:
-        ledger.append("scope.failed", {"hypothesis": hypothesis.identifier, "forbidden": forbidden})
+    current_head = git_output(["rev-parse", "HEAD"], worktree)
+    if current_head != start_head:
+        ledger.append(
+            "history.failed",
+            {
+                "hypothesis": hypothesis.identifier,
+                "start_head": start_head,
+                "current_head": current_head,
+            },
+        )
         return {
             "hypothesis": hypothesis.identifier,
-            "status": "scope_failed",
-            "forbidden_files": forbidden,
+            "status": "history_mutation_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "start_head": start_head,
+            "current_head": current_head,
+        }
+    try:
+        agent_result = validate_agent_result(result_path)
+    except (PipelineError, json.JSONDecodeError) as error:
+        ledger.append(
+            "agent_result.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "agent_result_invalid",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+        }
+    ledger.append(
+        "agent_result.validated",
+        {
+            "hypothesis": hypothesis.identifier,
+            "status": agent_result["status"],
+            "sha256": sha256_file(result_path),
+        },
+    )
+    if agent_result["status"] != "completed":
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": f"agent_{agent_result['status']}",
+            "branch": branch,
+            "worktree": str(worktree),
+            "summary": agent_result["summary"],
+            "negative_results": agent_result["negative_results"],
+        }
+    configured_models = project_agent_models(worktree)
+    expected_models = {
+        role: configured_models[role]
+        for role in REQUIRED_RESEARCH_ROLES
+        if role in configured_models
+    }
+    role_evidence = subagent_role_evidence(hook_event_dir, expected_models)
+    missing_roles = sorted(
+        role for role in REQUIRED_RESEARCH_ROLES if not role_evidence.get(role, {}).get("passed")
+    )
+    ledger.append(
+        "agent_roles.observed",
+        {
+            "hypothesis": hypothesis.identifier,
+            "evidence": role_evidence,
+            "missing": missing_roles,
+        },
+    )
+    if missing_roles:
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "agent_routing_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "role_evidence": role_evidence,
+            "missing_roles": missing_roles,
+        }
+    try:
+        changes = validate_candidate_state(worktree, hypothesis, start_head)
+    except PipelineError as error:
+        ledger.append(
+            "scope.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "candidate_validation_failed",
+            "error": str(error),
             "branch": branch,
             "worktree": str(worktree),
         }
-    gate_reports = run_gates(worktree, ledger)
-    gates_passed = all(report["returncode"] == 0 for report in gate_reports)
-    holdout = (
-        run_external_holdout(root, worktree, hypothesis, ledger)
-        if gates_passed
-        else {"passed": False, "reason": "deterministic gates failed"}
+    try:
+        validate_reported_changes(agent_result, changes)
+    except PipelineError as error:
+        ledger.append(
+            "agent_result.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "change_report_mismatch",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+            "changed_files": changes,
+        }
+    try:
+        experiment_contract = validate_experiment_contract(
+            worktree, hypothesis, baseline_digest
+        )
+    except (PipelineError, json.JSONDecodeError) as error:
+        ledger.append(
+            "experiment_contract.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "experiment_contract_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+        }
+    ledger.append(
+        "experiment_contract.validated",
+        {
+            "hypothesis": hypothesis.identifier,
+            "sha256": hashlib.sha256(canonical(experiment_contract).encode("utf-8")).hexdigest(),
+        },
     )
-    comparison = compare_candidate(root, worktree) if gates_passed else {
-        "passed": False,
-        "reason": "one or more gates failed",
-    }
+    try:
+        gate_reports = run_gates(worktree, ledger, root, root_snapshot)
+        gates_passed = all(report["returncode"] == 0 for report in gate_reports)
+        if gates_passed:
+            trusted_report = run_trusted_root_tests(
+                root, worktree, ledger, root_snapshot
+            )
+            gate_reports.append(trusted_report)
+            gates_passed = trusted_report["returncode"] == 0
+        if gates_passed:
+            try:
+                holdout = run_external_holdout(
+                    root, worktree, hypothesis, ledger, root_snapshot
+                )
+            except (PipelineError, json.JSONDecodeError) as error:
+                holdout = {
+                    "passed": False,
+                    "reason": f"invalid holdout evidence: {error}",
+                }
+                ledger.append("holdout.failed", holdout)
+            assert_root_unchanged(root, root_snapshot)
+            try:
+                comparison = compare_candidate(root, worktree, hypothesis)
+            except (PipelineError, json.JSONDecodeError) as error:
+                comparison = {
+                    "passed": False,
+                    "reason": f"invalid benchmark evidence: {error}",
+                }
+                ledger.append("comparison.failed", comparison)
+        else:
+            holdout = {"passed": False, "reason": "deterministic gates failed"}
+            comparison = {"passed": False, "reason": "one or more gates failed"}
+        assert_root_unchanged(root, root_snapshot)
+    except RootIntegrityError as error:
+        return root_integrity_failure(
+            error,
+            hypothesis=hypothesis,
+            branch=branch,
+            worktree=worktree,
+            ledger=ledger,
+        )
     if not holdout.get("passed"):
         comparison = {**comparison, "passed": False, "holdout_blocked": True}
     result = {
@@ -533,16 +1765,49 @@ def execute_one(
         "status": "accepted" if comparison.get("passed") else "rejected",
         "branch": branch,
         "worktree": str(worktree),
-        "changed_files": changes,
+        "agent_changed_files": changes,
+        "changed_files": [],
+        "role_evidence": role_evidence,
         "gates": gate_reports,
         "holdout": holdout,
         "comparison": comparison,
+        "promotion_requested": auto_promote,
+        "promotion_eligible": bool(comparison.get("passed")),
     }
-    (experiment_dir / "orchestrator-result.json").write_text(
-        json.dumps(result, indent=2), encoding="utf-8"
-    )
-    if comparison.get("passed"):
-        run(["git", "add", "-A"], cwd=worktree)
+    result["promoted"] = False
+    orchestrator_result = experiment_dir / "orchestrator-result.json"
+    write_public_orchestrator_result(orchestrator_result, result)
+    try:
+        final_changes = validate_candidate_state(worktree, hypothesis, start_head)
+    except PipelineError as error:
+        result["status"] = "post_gate_validation_failed"
+        result["error"] = str(error)
+        write_public_orchestrator_result(orchestrator_result, result)
+        ledger.append("scope.failed", result)
+        return result
+    result["changed_files"] = final_changes
+    write_public_orchestrator_result(orchestrator_result, result)
+    if comparison.get("passed") and auto_promote:
+        protected_tests = existing_tracked_test_changes(root, final_changes)
+        if protected_tests:
+            result["status"] = "accepted_requires_review"
+            result["promotion_blocked"] = "existing tracked tests changed"
+            result["protected_test_changes"] = protected_tests
+            write_public_orchestrator_result(orchestrator_result, result)
+            ledger.append("promotion.blocked", result)
+            return result
+        run(["git", "add", "-A", "--", *final_changes], cwd=worktree)
+        staged = set(
+            git_output(
+                ["diff", "--cached", "--name-only", "--no-renames", "HEAD", "--"],
+                worktree,
+            ).splitlines()
+        )
+        if staged != set(final_changes):
+            raise PipelineError(
+                "staged candidate paths differ from validated paths: "
+                f"staged={sorted(staged)}, validated={final_changes}"
+            )
         run(
             [
                 "git",
@@ -552,17 +1817,21 @@ def execute_one(
             ],
             cwd=worktree,
         )
-        if auto_promote:
-            assert_clean(root)
-            run(["git", "merge", "--ff-only", branch], cwd=root)
-            result["promoted"] = True
+        assert_root_unchanged(root, root_snapshot)
+        assert_clean(root)
+        run(["git", "merge", "--ff-only", branch], cwd=root)
+        result["promoted"] = True
+    elif not auto_promote:
+        assert_root_unchanged(root, root_snapshot)
     ledger.append("hypothesis.completed", result)
     return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("dry-run", "execute"), default="dry-run")
+    parser.add_argument(
+        "--mode", choices=("preflight", "dry-run", "execute"), default="preflight"
+    )
     parser.add_argument("--hypothesis", action="append", default=[])
     parser.add_argument("--max-hypotheses", type=int, default=1)
     parser.add_argument("--codex", default="codex")
@@ -571,37 +1840,54 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "results" / "autonomy_dry_run.json",
+        default=None,
     )
     args = parser.parse_args()
-    document, hypotheses = load_hypotheses(ROOT / "autonomy/hypotheses.json")
+    _, hypotheses = load_hypotheses(ROOT / "autonomy/hypotheses.json")
     selected = [item for item in hypotheses if item.status == "pending"]
     if args.hypothesis:
         selected = [item for item in selected if item.identifier in set(args.hypothesis)]
     selected = selected[: args.max_hypotheses]
     if not selected:
         raise PipelineError("no pending hypotheses matched")
+    if args.auto_promote and args.max_hypotheses != 1:
+        raise PipelineError("auto-promote requires --max-hypotheses 1")
+    preflight = preflight_report(ROOT, selected, args.codex)
+    if args.mode == "preflight":
+        report = preflight
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(json.dumps(report, indent=2))
+        return
+    if not preflight["ready_for_dry_run"]:
+        raise PipelineError("preflight blocked: " + "; ".join(preflight["blockers"]))
+    codex_info = preflight["codex"]
+    if codex_info is None:
+        raise PipelineError("preflight did not resolve a Codex runtime")
+    runtime = CodexRuntime(Path(codex_info["path"]), codex_info["version"])
     if args.mode == "dry-run":
-        report = dry_run_plan(ROOT, selected, args.codex)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        report = dry_run_plan(ROOT, selected, runtime)
+        output = args.output or ROOT / "results/autonomy_runs/dry-run.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report, indent=2))
         return
 
-    if shutil.which(args.codex) is None:
-        raise PipelineError(f"Codex executable not found: {args.codex}")
+    if not preflight["ready_for_execute"]:
+        raise PipelineError("execute blocked: " + "; ".join(preflight["blockers"]))
     assert_git_repository(ROOT)
     assert_clean(ROOT)
     lock_path = ROOT / "autonomy/state/pipeline.lock"
     descriptor = acquire_lock(lock_path)
-    ledger = EventLedger(ROOT / "autonomy/state/events.jsonl")
     try:
+        ledger = EventLedger(ROOT / "autonomy/state/events.jsonl")
         args.worktree_root.mkdir(parents=True, exist_ok=True)
         results = [
             execute_one(
                 ROOT,
                 hypothesis,
-                codex=args.codex,
+                runtime=runtime,
                 worktree_root=args.worktree_root,
                 auto_promote=args.auto_promote,
                 ledger=ledger,
@@ -611,8 +1897,11 @@ def main() -> None:
     finally:
         os.close(descriptor)
         lock_path.unlink(missing_ok=True)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"results": results}, indent=2), encoding="utf-8")
+    output = args.output or ROOT / "results/autonomy_runs" / (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".json"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"results": results}, indent=2), encoding="utf-8")
     print(json.dumps({"results": results}, indent=2))
 
 

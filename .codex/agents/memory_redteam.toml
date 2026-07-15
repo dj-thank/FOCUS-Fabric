@@ -1,6 +1,6 @@
 name = "memory_redteam"
 description = "Read-only adversary for long-horizon tool-use memory poisoning, policy erasure, stale facts, provenance loss, and context-collapse attacks."
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """

@@ -2,16 +2,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-*/
 .ruff_cache/
 .mypy_cache/
 build/
 dist/
 *.egg-info/
 worktrees/
-results/candidate_benchmark.json
-results/experiments/
-autonomy/events.jsonl
-autonomy/.lock
+results/autonomy_runs/
+autonomy/state/
 *.tmp
 .DS_Store
 

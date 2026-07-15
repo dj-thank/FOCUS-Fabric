@@ -1,6 +1,6 @@
 name = "benchmark_adversary"
 description = "Adversarial evaluator that searches for leakage, distribution shift, routing collapse, compaction drift, and misleading metrics."
-model = "gpt-5.6"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 developer_instructions = """

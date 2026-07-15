@@ -1,120 +1,107 @@
 # Codex Autonomous Research Pipeline
 
-## Purpose
+## What this automates
 
-The pipeline automates **hypothesis execution**, not truth. It is designed to make autonomous code changes cheap while making unsupported promotion expensive.
+The pipeline lets Codex investigate one preregistered FOCUS-Fabric hypothesis in an isolated Git worktree. It automates the research loop, not the truth of the result and not publication.
 
-## Requirements
+The safe default is:
 
-- A current authenticated Codex CLI available as `codex`.
-- Git repository with a clean working tree.
-- Python environment satisfying `pyproject.toml`.
-- Sufficient CPU/GPU/dataset resources for the selected hypothesis.
+- diagnose every prerequisite before spending a run;
+- execute only a hypothesis with a machine-readable evaluator;
+- keep all candidate changes in a separate worktree;
+- run deterministic gates and a post-hoc holdout from trusted root files;
+- preserve negative results;
+- make no commit, merge, push, tag, or release.
 
-The build container used for this release did not have the Codex executable, so `execute` mode was not run here. `dry-run` is executable and records the exact planned commands.
+`--auto-promote` changes only the commit and fast-forward merge step. Push, release, and publication always remain manual.
 
-## Repository instructions
+## Current executable scope
 
-`AGENTS.md` is the root contract. It states invariants that must remain true:
+`H001-forward-influence-routing` is the only live-executable hypothesis. Its promotion contract is explicit:
 
-- no unsupported measurements;
-- output and log-mass are inseparable;
-- exact fallback/archive accounting is explicit;
-- fit, selection, calibration, and test data remain separate;
-- protected semantic memory cannot be summarized away;
-- tests cannot be weakened to manufacture improvement;
-- publication is never automatic.
+- primary metric: in-distribution `output_nmse`;
+- at least 5% relative improvement;
+- exactly matched Fabric active bytes;
+- no teacher-forced token-agreement regression;
+- free-running sequence agreement remains true;
+- repeated compaction produces zero invalid codec outputs;
+- randomized holdout safety passes.
 
-`.codex/agents/*.toml` defines specialized research, architecture, kernel, benchmark, reproducibility, claim, and memory-red-team roles. `.agents/skills/` supplies reusable workflows.
+H002-H004 remain useful preregistrations, but preflight blocks live execution until each has a dedicated evaluator. They are not silently judged with H001's metric.
 
-## Lifecycle
+## Why the runner bootstraps Codex explicitly
 
-### 1. Preregistration
+Codex project config is loaded only for a trusted exact project path. A dynamically created Git worktree has a different path, so it cannot safely rely on inherited trust.
 
-`autonomy/hypotheses.json` defines:
+Every live command therefore:
 
-- mechanism and predicted effect;
-- falsifier;
-- allowed files;
-- resource budget;
-- priority and status.
+- discovers and probes the installed Codex Desktop runtimes instead of trusting the first PATH shim;
+- uses `gpt-5.6-sol` for the root and the checked-in Sol/Terra specialist profiles;
+- registers every `.codex/agents/*.toml` profile through CLI config overrides;
+- enables multi-agent execution with bounded depth and concurrency;
+- ignores user config and enables only the checked-in `SubagentStart`/`SubagentStop`
+  recorder;
+- writes role/model lifecycle evidence to an orchestrator-owned directory outside
+  the candidate worktree, where the candidate sandbox cannot forge it;
+- sets Codex workspace network access to false;
+- uses `workspace-write`, approval policy `never`, JSONL output, an output schema, and an ephemeral session.
 
-The orchestrator refuses an unknown or non-pending hypothesis.
+The last-message JSON and raw JSONL stream are stored below ignored `autonomy/state/`. Public candidate evidence belongs below `results/experiments/<hypothesis>/`.
 
-### 2. Isolation
+## Windows commands
 
-A clean Git worktree and branch are created per hypothesis. The agent may edit only declared paths. Changed files are checked after the run; an out-of-scope path blocks the candidate.
+Run from the repository root in PowerShell:
 
-### 3. Structured Codex execution
+```powershell
+# 1. Verify CLI version, login, model catalog, venv, Git state, profiles, and evaluator.
+.\scripts\autonomy\run_cycle.cmd --mode preflight --hypothesis H001-forward-influence-routing
 
-The command uses non-interactive `codex exec`, workspace-write sandboxing, JSONL event output, an output-last-message file, and `autonomy/schemas/agent_result.schema.json`. The prompt includes the preregistration, invariants, baseline digest, allowed scope, and required gates.
+# 2. Render the exact isolated plan without invoking an agent.
+.\scripts\autonomy\run_cycle.cmd --mode dry-run --hypothesis H001-forward-influence-routing
 
-The event stream is preserved. A separate hash-chained automation ledger records start, tool completion, gate results, evidence comparison, and promotion decision.
+# 3. Run H001 once in a separate worktree. No commit or merge is made.
+.\scripts\autonomy\run_cycle.cmd --mode execute --hypothesis H001-forward-influence-routing
 
-### 4. Deterministic gates
-
-`autonomy/gates.json` currently requires:
-
-1. source/script/test compilation;
-2. unit tests;
-3. candidate benchmark generation;
-4. claim-ledger verification;
-5. repository drift scan.
-
-A candidate that changes expected evidence must update the candidate artifact, not overwrite the accepted baseline.
-
-### 5. External randomized holdout
-
-After Codex finishes, the trusted root orchestrator generates a seed. `scripts/autonomy/holdout_evaluator.py` is executed twice—once with root source and once with worktree source—on the same unseen cases. The candidate cannot edit the trusted evaluator from its worktree scope.
-
-Promotion requires:
-
-- exact forced-fallback error below tolerance;
-- no invalid outputs;
-- randomized objective no worse than 2% relative to root;
-- public evidence score improved by at least 0.5%;
-- end-to-end token agreement not below baseline;
-- repeated-compaction invalid outputs equal zero.
-
-This is an anti-overfitting measure, not a cryptographic defense against malicious code. Independent review and external infrastructure remain mandatory for release.
-
-### 6. Promotion
-
-Default behavior is evidence generation only. `--auto-promote` is required to commit and fast-forward the root branch. Release tagging, signing, publishing, and deployment are outside the automatic loop.
-
-## Commands
-
-```bash
-# List/plan the first two pending hypotheses.
-python scripts/autonomy/run_codex_loop.py --mode dry-run --max-hypotheses 2
-
-# Execute one hypothesis in a worktree; do not merge it.
-python scripts/autonomy/run_codex_loop.py --mode execute --max-hypotheses 1
-
-# Execute and permit promotion only if every gate passes.
-python scripts/autonomy/run_codex_loop.py --mode execute --max-hypotheses 1 --auto-promote
+# 4. Optional: permit commit + ff-only merge only after every gate passes.
+.\scripts\autonomy\run_cycle.cmd --mode execute --hypothesis H001-forward-influence-routing --auto-promote
 ```
 
-Use a particular hypothesis:
+If preflight reports that Codex is not authenticated for the current Windows user, run the current Codex CLI's device login once, then repeat preflight:
 
-```bash
-python scripts/autonomy/run_codex_loop.py --mode execute --hypothesis H003
+```powershell
+$Preflight = .\scripts\autonomy\run_cycle.cmd --mode preflight --hypothesis H001-forward-influence-routing | ConvertFrom-Json
+$Codex = $Preflight.codex.path
+& $Codex login --device-auth
 ```
 
-## Failure handling
+This deliberately uses the executable path resolved by preflight; a stale or broken
+PATH shim is not used.
 
-A failed Codex command, schema violation, scope violation, test failure, missing artifact, holdout regression, or evidence regression produces a non-promoted result. Worktrees are preserved only long enough to record diagnostics, then removed. The hypothesis remains pending unless a human changes its status with a reason.
+The `.cmd` wrapper works under PowerShell's default script policy and always runs `.venv\Scripts\python.exe`. This prevents global Python or a missing PATH-level `pytest` from changing the gate environment. `run_cycle.ps1` is also provided for environments that permit PowerShell scripts.
 
-## Entropy control
+Equivalent Make targets are `autonomy-preflight`, `autonomy-dry-run`, and `autonomy-execute` when GNU Make is available.
 
-Autonomous agents copy local patterns. Drift therefore compounds. The pipeline includes:
+## Execution lifecycle
 
-- `detect_drift.py` for missing tests, claim phrases, stale benchmark evidence, and oversized Python modules;
-- claim hashes to stop documentation from drifting away from measurements;
-- specialized cleanup hypotheses;
-- review agents with adversarial roles;
-- immutable architecture and weakness documents as repository-visible system knowledge.
+1. **Preflight** probes a working Codex executable, login state, current model catalog, supported CLI options, project venv, clean Git state, required artifacts, specialist profiles, and the selected evaluator.
+2. **Preregistration** loads the hypothesis, controls, falsifier, primary metric, allowed paths, and baseline SHA-256. Before gates, the runner validates that `experiment.json` preserves those locked values and supplies non-empty independent-variable, split-discipline, and stopping-rule fields.
+3. **Isolation** creates `../.focus-fabric-worktrees/<hypothesis>-<timestamp>` and records its starting commit.
+4. **Agent run** injects the checked-in specialist roles. The agent is forbidden to commit or alter Git history. Trusted lifecycle hooks record each required role's start, stop, and actual model outside the candidate worktree.
+5. **Validation** checks the final JSON schema/status, its hash, exact agreement between self-reported and Git-observed changes, history immutability, and exact file/directory boundaries. The same scope check runs again after gates and evidence generation.
+6. **Trusted gates** load `autonomy/gates.json` and the original test suite from the root checkout, while importing candidate source. Python commands are pinned to the project interpreter and receive a credential-free environment. Plotting is fixed to the headless `Agg` backend. After Codex and after every host-side candidate process, the runner verifies the root HEAD, status, baseline digest, and byte-level digest of every tracked root file before continuing.
+7. **Holdout and decision** compare root and candidate on the same seed generated only after the agent run, then apply the H001 metric contract.
+8. **Retention** leaves the branch and worktree intact for human inspection. With no `--auto-promote`, even an accepted candidate stays uncommitted. Automatic promotion is also blocked if an existing tracked test was changed or deleted; new tests may be promoted only with the candidate implementation.
 
-## Security notes
+Root ledger and run reports are written to ignored `autonomy/state/` and `results/autonomy_runs/`, so one run does not make the next preflight dirty.
 
-Never use `--dangerously-bypass-approvals-and-sandbox` on a normal host. Run external benchmark backends and candidate kernels in an OS/container boundary with restricted credentials and network access. The supplied workspace scope check is not an OS security boundary.
+## Failure behavior
+
+Codex command failure, model/config mismatch, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
+
+The root lock is released in a `finally` block. A stale lock after a machine crash must be inspected before manual removal; never delete it while another cycle may still be running.
+
+## Security boundary
+
+The inner Codex process is sandboxed and has workspace network access disabled. Both Codex and gate subprocesses start from small environment allowlists: Codex retains only the paths needed to discover the existing ChatGPT login, while API-key-like and unrelated credentials are not inherited. The one-off hook-trust bypass applies only to the explicit checked-in lifecycle recorder; user/global hooks remain ignored.
+
+This is still not a VM or container security boundary. Candidate Python is executed on the host during tests and benchmarks. Root-integrity snapshots detect persistent writes to tracked project files; they do not prevent transient writes, access to unrelated host files, or tampering outside the tracked tree. Use a dedicated VM/container for adversarial or third-party hypotheses, and never use `--dangerously-bypass-approvals-and-sandbox` on a normal workstation.
