@@ -47,6 +47,14 @@ class RootIntegrityError(PipelineError):
     pass
 
 
+class PromotionIntegrityError(PipelineError):
+    pass
+
+
+class CandidateIntegrityError(PipelineError):
+    pass
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -61,6 +69,16 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def assert_file_sha256(path: Path, expected_sha256: str, label: str) -> None:
+    if not path.is_file():
+        raise CandidateIntegrityError(f"{label} is missing: {path}")
+    actual = sha256_file(path)
+    if actual != expected_sha256:
+        raise CandidateIntegrityError(
+            f"{label} changed: expected {expected_sha256}, observed {actual}"
+        )
 
 
 def exact_nonnegative_integer(value: Any, label: str) -> int:
@@ -466,6 +484,84 @@ def assert_root_unchanged(root: Path, snapshot: RootSnapshot) -> None:
         )
 
 
+def capture_clean_candidate_commit(
+    worktree: Path,
+    *,
+    expected_parent: str,
+    expected_tree: str,
+    expected_paths: Iterable[str],
+) -> tuple[str, str]:
+    status = git_output(["status", "--porcelain"], worktree)
+    if status:
+        raise PromotionIntegrityError("candidate worktree is dirty after commit")
+    commit = git_output(["rev-parse", "HEAD"], worktree)
+    parents = git_output(["rev-list", "--parents", "-n", "1", commit], worktree).split()
+    if parents != [commit, expected_parent]:
+        raise PromotionIntegrityError(
+            f"candidate commit has unexpected ancestry: {parents}"
+        )
+    tree = git_output(["rev-parse", f"{commit}^{{tree}}"], worktree)
+    if tree != expected_tree:
+        raise PromotionIntegrityError(
+            f"candidate commit tree differs from staged tree: {tree} != {expected_tree}"
+        )
+    committed_paths = set(
+        git_output(
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--no-renames",
+                expected_parent,
+                commit,
+                "--",
+            ],
+            worktree,
+        ).splitlines()
+    )
+    if committed_paths != set(expected_paths):
+        raise PromotionIntegrityError(
+            "candidate commit paths differ from validated paths: "
+            f"committed={sorted(committed_paths)}, validated={sorted(expected_paths)}"
+        )
+    return commit, tracked_tree_sha256(worktree)
+
+
+def assert_promotion_postcondition(
+    root: Path,
+    *,
+    expected_head: str,
+    expected_tree_sha256: str,
+) -> None:
+    actual_head = git_output(["rev-parse", "HEAD"], root)
+    status = git_output(["status", "--porcelain"], root)
+    actual_tree_sha256 = tracked_tree_sha256(root)
+    differences: list[str] = []
+    if actual_head != expected_head:
+        differences.append("head")
+    if status:
+        differences.append("status")
+    if actual_tree_sha256 != expected_tree_sha256:
+        differences.append("tracked_tree_sha256")
+    if differences:
+        raise PromotionIntegrityError(
+            "promotion postcondition failed: " + ", ".join(differences)
+        )
+
+
+def random_nonexistent_hooks_path(root: Path) -> Path:
+    for _ in range(8):
+        candidate = (
+            root
+            / "autonomy/state/disabled-git-hooks"
+            / secrets.token_hex(16)
+        )
+        if not candidate.exists():
+            return candidate
+    raise PromotionIntegrityError("could not allocate a nonexistent Git hooks path")
+
+
 @contextmanager
 def root_integrity_guard(
     root: Path, snapshot: RootSnapshot | None
@@ -712,6 +808,29 @@ def slug(identifier: str) -> str:
     ).strip("-")
 
 
+def experiment_contract_for(
+    hypothesis: Hypothesis, baseline_digest: str
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "hypothesis_id": hypothesis.identifier,
+        "baseline_sha256": baseline_digest,
+        "independent_variable": hypothesis.rationale,
+        "controls": list(hypothesis.controls),
+        "split_discipline": (
+            "Use the committed benchmark contract for the primary comparison; "
+            "the outer runner generates the randomized holdout seed only after "
+            "the Codex implementation phase ends."
+        ),
+        "primary_metric": hypothesis.primary_metric,
+        "stopping_rule": (
+            "Stop after one bounded Codex execution. The outer evaluator applies "
+            "the declared threshold without tuning or retrying on holdout results."
+        ),
+        "disconfirming_condition": hypothesis.disconfirming_condition,
+    }
+
+
 def prompt_for(hypothesis: Hypothesis, baseline_digest: str) -> str:
     allowed_rules = (
         *hypothesis.allowed_files,
@@ -722,17 +841,7 @@ def prompt_for(hypothesis: Hypothesis, baseline_digest: str) -> str:
     )
     allowed = "\n".join(f"- {item}" for item in allowed_rules)
     controls = "\n".join(f"- {item}" for item in hypothesis.controls)
-    experiment_contract = {
-        "schema_version": 1,
-        "hypothesis_id": hypothesis.identifier,
-        "baseline_sha256": baseline_digest,
-        "independent_variable": "Describe the one candidate change being tested.",
-        "controls": list(hypothesis.controls),
-        "split_discipline": "Describe fit/selection/calibration and held-out data boundaries.",
-        "primary_metric": hypothesis.primary_metric,
-        "stopping_rule": "State when implementation/search stops.",
-        "disconfirming_condition": hypothesis.disconfirming_condition,
-    }
+    experiment_contract = experiment_contract_for(hypothesis, baseline_digest)
     return f"""You are the root research agent for hypothesis {hypothesis.identifier}.
 
 Read AGENTS.md and follow this preregistered research protocol. Spawn
@@ -764,9 +873,9 @@ BASELINE ARTIFACT SHA-256
 {baseline_digest}
 
 Requirements:
-1. Create `results/experiments/{hypothesis.identifier}/experiment.json` before code
-   changes. Preserve these exact keys and declared values, replacing only the
-   three instructional descriptions with concrete non-empty text:
+1. The outer runner created this experiment contract before starting Codex. Read
+   it from `results/experiments/{hypothesis.identifier}/experiment.json`; do not
+   modify, delete, or replace it:
 {json.dumps(experiment_contract, indent=2, ensure_ascii=False)}
 2. Do not modify files outside allowed prefixes except the experiment record
    and candidate result artifacts.
@@ -775,8 +884,9 @@ Requirements:
 4. Run `make gate`. Do not weaken gates or edit baseline results.
 5. Finish with structured JSON matching the supplied schema. Include failures,
    risks, negative results, and exact evidence paths. `changed_files` must list
-   every Git-observed changed path exactly, including the experiment record and
-   candidate benchmark, but not the orchestrator-owned `autonomy/state/` files.
+   every agent-created Git-observed changed path exactly, including any candidate
+   benchmark, but not the orchestrator-owned experiment contract or
+   `autonomy/state/` files.
 """
 
 
@@ -832,6 +942,87 @@ def changed_files(worktree: Path) -> list[str]:
     )
 
 
+def candidate_blob_map(worktree: Path, paths: Iterable[str]) -> dict[str, str | None]:
+    blobs: dict[str, str | None] = {}
+    for item in sorted(set(paths)):
+        normalized = normalize_repo_path(item)
+        path = worktree / normalized
+        if path.is_symlink():
+            raise CandidateIntegrityError(f"candidate symlink is not allowed: {normalized}")
+        if not path.exists():
+            blobs[normalized] = None
+            continue
+        if not path.is_file():
+            raise CandidateIntegrityError(f"candidate path is not a file: {normalized}")
+        blobs[normalized] = git_output(
+            ["hash-object", "--no-filters", "--", normalized],
+            worktree,
+        )
+    return blobs
+
+
+def staged_blob_map(worktree: Path, paths: Iterable[str]) -> dict[str, str | None]:
+    blobs: dict[str, str | None] = {}
+    for item in sorted(set(paths)):
+        normalized = normalize_repo_path(item)
+        entry = git_output(["ls-files", "--stage", "--", normalized], worktree)
+        if not entry:
+            blobs[normalized] = None
+            continue
+        fields = entry.split(maxsplit=3)
+        if len(fields) != 4 or fields[2] != "0":
+            raise PromotionIntegrityError(f"invalid staged entry for {normalized}: {entry}")
+        blobs[normalized] = fields[1]
+    return blobs
+
+
+def stage_validated_paths(worktree: Path, paths: Iterable[str]) -> None:
+    """Stage exact file bytes with plumbing, bypassing clean filters and hooks."""
+
+    for item in sorted(set(paths)):
+        normalized = normalize_repo_path(item)
+        path = worktree / normalized
+        if not path.exists():
+            run(["git", "update-index", "--force-remove", "--", normalized], cwd=worktree)
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise PromotionIntegrityError(
+                f"only regular files can be promoted: {normalized}"
+            )
+        blob = git_output(
+            ["hash-object", "-w", "--no-filters", "--", normalized],
+            worktree,
+        )
+        tracked_entry = git_output(["ls-tree", "HEAD", "--", normalized], worktree)
+        mode = tracked_entry.split(maxsplit=1)[0] if tracked_entry else "100644"
+        if mode not in {"100644", "100755"}:
+            raise PromotionIntegrityError(
+                f"unsupported Git file mode for {normalized}: {mode}"
+            )
+        run(
+            [
+                "git",
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"{mode},{blob},{normalized}",
+            ],
+            cwd=worktree,
+        )
+
+
+def orchestrator_mutable_paths(hypothesis: Hypothesis) -> set[str]:
+    experiment_root = f"results/experiments/{hypothesis.identifier}"
+    return {
+        "results/candidate_benchmark.json",
+        "results/candidate_benchmark.csv",
+        "results/candidate_benchmark.png",
+        f"{experiment_root}/holdout-baseline.json",
+        f"{experiment_root}/holdout-candidate.json",
+        f"{experiment_root}/orchestrator-result.json",
+    }
+
+
 def validate_candidate_state(
     worktree: Path,
     hypothesis: Hypothesis,
@@ -872,6 +1063,8 @@ def run_gates(
     ledger: EventLedger,
     trusted_root: Path,
     root_snapshot: RootSnapshot | None = None,
+    contract_path: Path | None = None,
+    contract_sha256: str | None = None,
 ) -> list[dict[str, Any]]:
     gate_config = json.loads(
         (trusted_root / "autonomy/gates.json").read_text(encoding="utf-8")
@@ -910,6 +1103,8 @@ def run_gates(
                 inherit_environment=False,
                 check=False,
             )
+        if contract_path is not None and contract_sha256 is not None:
+            assert_file_sha256(contract_path, contract_sha256, "experiment contract")
         report = {
             "name": gate["name"],
             "requested_command": requested_command,
@@ -930,6 +1125,8 @@ def run_trusted_root_tests(
     worktree: Path,
     ledger: EventLedger,
     root_snapshot: RootSnapshot | None = None,
+    contract_path: Path | None = None,
+    contract_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Run the immutable root test suite against the candidate source tree."""
 
@@ -961,6 +1158,8 @@ def run_trusted_root_tests(
             inherit_environment=False,
             check=False,
         )
+    if contract_path is not None and contract_sha256 is not None:
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
     report = {
         "name": "trusted-root-tests",
         "command": command,
@@ -1011,11 +1210,15 @@ def validate_agent_result(path: Path) -> dict[str, Any]:
 def validate_reported_changes(
     payload: dict[str, Any],
     actual_changes: list[str],
+    ignored_paths: Iterable[str] = (),
 ) -> None:
     reported = {normalize_repo_path(str(item)) for item in payload["changed_files"]}
     actual = {normalize_repo_path(item) for item in actual_changes}
+    ignored = {normalize_repo_path(item) for item in ignored_paths}
     reported = {item for item in reported if not item.startswith("autonomy/state/")}
     actual = {item for item in actual if not item.startswith("autonomy/state/")}
+    reported -= ignored
+    actual -= ignored
     if reported != actual:
         missing = sorted(actual - reported)
         overstated = sorted(reported - actual)
@@ -1042,38 +1245,17 @@ def validate_experiment_contract(
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise PipelineError("experiment contract must be a JSON object")
-    required = {
-        "schema_version",
-        "hypothesis_id",
-        "baseline_sha256",
-        "independent_variable",
-        "controls",
-        "split_discipline",
-        "primary_metric",
-        "stopping_rule",
-        "disconfirming_condition",
-    }
-    missing = sorted(required - set(payload))
-    if missing:
-        raise PipelineError("experiment contract missing field(s): " + ", ".join(missing))
-    exact_values = {
-        "schema_version": 1,
-        "hypothesis_id": hypothesis.identifier,
-        "baseline_sha256": baseline_digest,
-        "controls": list(hypothesis.controls),
-        "primary_metric": hypothesis.primary_metric,
-        "disconfirming_condition": hypothesis.disconfirming_condition,
-    }
-    mismatched = [
-        key for key, expected in exact_values.items() if payload.get(key) != expected
-    ]
-    if mismatched:
-        raise PipelineError(
-            "experiment contract changed preregistered field(s): " + ", ".join(mismatched)
+    expected = experiment_contract_for(hypothesis, baseline_digest)
+    if payload != expected:
+        changed = sorted(
+            key
+            for key in set(payload) | set(expected)
+            if payload.get(key) != expected.get(key)
         )
-    for key in ("independent_variable", "split_discipline", "stopping_rule"):
-        if not isinstance(payload.get(key), str) or not payload[key].strip():
-            raise PipelineError(f"experiment contract field must be non-empty text: {key}")
+        raise PipelineError(
+            "experiment contract differs from the preregistered payload: "
+            + ", ".join(changed)
+        )
     return payload
 
 
@@ -1299,6 +1481,8 @@ def run_external_holdout(
     hypothesis: Hypothesis,
     ledger: EventLedger,
     root_snapshot: RootSnapshot | None = None,
+    contract_path: Path | None = None,
+    contract_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate root and candidate code on the same post-hoc random cases."""
 
@@ -1339,6 +1523,8 @@ def run_external_holdout(
             inherit_environment=False,
             check=False,
         )
+    if contract_path is not None and contract_sha256 is not None:
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
     with root_integrity_guard(root, root_snapshot):
         candidate_run = run(
             [
@@ -1359,6 +1545,8 @@ def run_external_holdout(
             inherit_environment=False,
             check=False,
         )
+    if contract_path is not None and contract_sha256 is not None:
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
     if (
         baseline_run.returncode != 0
         or candidate_run.returncode != 0
@@ -1519,6 +1707,13 @@ def execute_one(
     start_head = git_output(["rev-parse", "HEAD"], worktree)
     experiment_dir = worktree / "results" / "experiments" / hypothesis.identifier
     experiment_dir.mkdir(parents=True, exist_ok=True)
+    contract_path = experiment_dir / "experiment.json"
+    preregistered_contract = experiment_contract_for(hypothesis, baseline_digest)
+    contract_path.write_text(
+        json.dumps(preregistered_contract, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    contract_sha256 = sha256_file(contract_path)
     private_run_dir = worktree / "autonomy" / "state" / "runs" / hypothesis.identifier
     private_run_dir.mkdir(parents=True, exist_ok=True)
     event_path = private_run_dir / "codex-events.jsonl"
@@ -1537,6 +1732,14 @@ def execute_one(
         project_root=worktree,
         trusted_root=root,
         hook_event_dir=hook_event_dir,
+    )
+    ledger.append(
+        "experiment_contract.preregistered",
+        {
+            "hypothesis": hypothesis.identifier,
+            "path": str(contract_path.relative_to(worktree)),
+            "sha256": contract_sha256,
+        },
     )
     ledger.append(
         "codex.started",
@@ -1573,6 +1776,19 @@ def execute_one(
     )
     try:
         assert_root_unchanged(root, root_snapshot)
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
+    except CandidateIntegrityError as error:
+        ledger.append(
+            "experiment_contract.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "experiment_contract_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+        }
     except RootIntegrityError as error:
         return root_integrity_failure(
             error,
@@ -1680,7 +1896,11 @@ def execute_one(
             "worktree": str(worktree),
         }
     try:
-        validate_reported_changes(agent_result, changes)
+        validate_reported_changes(
+            agent_result,
+            changes,
+            ignored_paths=(str(contract_path.relative_to(worktree)),),
+        )
     except PipelineError as error:
         ledger.append(
             "agent_result.failed",
@@ -1717,20 +1937,55 @@ def execute_one(
             "sha256": hashlib.sha256(canonical(experiment_contract).encode("utf-8")).hexdigest(),
         },
     )
+    agent_changes = [
+        path
+        for path in changes
+        if path != contract_path.relative_to(worktree).as_posix()
+    ]
+    immutable_candidate_paths = sorted(
+        (
+            set(agent_changes)
+            | {contract_path.relative_to(worktree).as_posix()}
+        )
+        - orchestrator_mutable_paths(hypothesis)
+    )
+    tested_candidate_blobs = candidate_blob_map(
+        worktree, immutable_candidate_paths
+    )
     try:
-        gate_reports = run_gates(worktree, ledger, root, root_snapshot)
+        gate_reports = run_gates(
+            worktree,
+            ledger,
+            root,
+            root_snapshot,
+            contract_path,
+            contract_sha256,
+        )
         gates_passed = all(report["returncode"] == 0 for report in gate_reports)
         if gates_passed:
             trusted_report = run_trusted_root_tests(
-                root, worktree, ledger, root_snapshot
+                root,
+                worktree,
+                ledger,
+                root_snapshot,
+                contract_path,
+                contract_sha256,
             )
             gate_reports.append(trusted_report)
             gates_passed = trusted_report["returncode"] == 0
         if gates_passed:
             try:
                 holdout = run_external_holdout(
-                    root, worktree, hypothesis, ledger, root_snapshot
+                    root,
+                    worktree,
+                    hypothesis,
+                    ledger,
+                    root_snapshot,
+                    contract_path,
+                    contract_sha256,
                 )
+            except CandidateIntegrityError:
+                raise
             except (PipelineError, json.JSONDecodeError) as error:
                 holdout = {
                     "passed": False,
@@ -1738,6 +1993,7 @@ def execute_one(
                 }
                 ledger.append("holdout.failed", holdout)
             assert_root_unchanged(root, root_snapshot)
+            assert_file_sha256(contract_path, contract_sha256, "experiment contract")
             try:
                 comparison = compare_candidate(root, worktree, hypothesis)
             except (PipelineError, json.JSONDecodeError) as error:
@@ -1750,6 +2006,14 @@ def execute_one(
             holdout = {"passed": False, "reason": "deterministic gates failed"}
             comparison = {"passed": False, "reason": "one or more gates failed"}
         assert_root_unchanged(root, root_snapshot)
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
+        observed_candidate_blobs = candidate_blob_map(
+            worktree, immutable_candidate_paths
+        )
+        if observed_candidate_blobs != tested_candidate_blobs:
+            raise CandidateIntegrityError(
+                "candidate code/evidence changed while host gates were running"
+            )
     except RootIntegrityError as error:
         return root_integrity_failure(
             error,
@@ -1758,6 +2022,17 @@ def execute_one(
             worktree=worktree,
             ledger=ledger,
         )
+    except CandidateIntegrityError as error:
+        result = {
+            "hypothesis": hypothesis.identifier,
+            "status": "candidate_integrity_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+            "promoted": False,
+        }
+        ledger.append("candidate_integrity.failed", result)
+        return result
     if not holdout.get("passed"):
         comparison = {**comparison, "passed": False, "holdout_blocked": True}
     result = {
@@ -1765,7 +2040,7 @@ def execute_one(
         "status": "accepted" if comparison.get("passed") else "rejected",
         "branch": branch,
         "worktree": str(worktree),
-        "agent_changed_files": changes,
+        "agent_changed_files": agent_changes,
         "changed_files": [],
         "role_evidence": role_evidence,
         "gates": gate_reports,
@@ -1785,6 +2060,18 @@ def execute_one(
         write_public_orchestrator_result(orchestrator_result, result)
         ledger.append("scope.failed", result)
         return result
+    try:
+        assert_file_sha256(contract_path, contract_sha256, "experiment contract")
+        if candidate_blob_map(worktree, immutable_candidate_paths) != tested_candidate_blobs:
+            raise CandidateIntegrityError(
+                "candidate code/evidence changed after successful gates"
+            )
+    except CandidateIntegrityError as error:
+        result["status"] = "candidate_integrity_failed"
+        result["error"] = str(error)
+        write_public_orchestrator_result(orchestrator_result, result)
+        ledger.append("candidate_integrity.failed", result)
+        return result
     result["changed_files"] = final_changes
     write_public_orchestrator_result(orchestrator_result, result)
     if comparison.get("passed") and auto_promote:
@@ -1796,7 +2083,8 @@ def execute_one(
             write_public_orchestrator_result(orchestrator_result, result)
             ledger.append("promotion.blocked", result)
             return result
-        run(["git", "add", "-A", "--", *final_changes], cwd=worktree)
+        final_blob_contract = candidate_blob_map(worktree, final_changes)
+        stage_validated_paths(worktree, final_changes)
         staged = set(
             git_output(
                 ["diff", "--cached", "--name-only", "--no-renames", "HEAD", "--"],
@@ -1808,18 +2096,80 @@ def execute_one(
                 "staged candidate paths differ from validated paths: "
                 f"staged={sorted(staged)}, validated={final_changes}"
             )
+        staged_final_blobs = staged_blob_map(worktree, final_changes)
+        if staged_final_blobs != final_blob_contract:
+            raise PromotionIntegrityError(
+                "staged candidate content differs from the final validated bytes"
+            )
+        staged_immutable_blobs = {
+            path: staged_final_blobs[path]
+            for path in immutable_candidate_paths
+        }
+        if staged_immutable_blobs != tested_candidate_blobs:
+            raise PromotionIntegrityError(
+                "staged agent content differs from the content that passed gates"
+            )
+        expected_tree = git_output(["write-tree"], worktree)
+        commit_hooks_path = random_nonexistent_hooks_path(root)
+        if commit_hooks_path.exists():
+            raise PromotionIntegrityError("commit hooks path unexpectedly exists")
         run(
             [
                 "git",
+                "-c",
+                f"core.hooksPath={commit_hooks_path}",
+                "-c",
+                "commit.gpgSign=false",
                 "commit",
                 "-m",
                 f"experiment: {hypothesis.identifier}",
             ],
             cwd=worktree,
         )
+        try:
+            candidate_commit, candidate_tree_sha256 = capture_clean_candidate_commit(
+                worktree,
+                expected_parent=start_head,
+                expected_tree=expected_tree,
+                expected_paths=final_changes,
+            )
+        except PromotionIntegrityError as error:
+            result["status"] = "accepted_requires_review"
+            result["promotion_blocked"] = str(error)
+            ledger.append("promotion.blocked", result)
+            return result
         assert_root_unchanged(root, root_snapshot)
         assert_clean(root)
-        run(["git", "merge", "--ff-only", branch], cwd=root)
+        merge_hooks_path = random_nonexistent_hooks_path(root)
+        if merge_hooks_path.exists():
+            raise PromotionIntegrityError("merge hooks path unexpectedly exists")
+        run(
+            [
+                "git",
+                "-c",
+                f"core.hooksPath={merge_hooks_path}",
+                "-c",
+                "merge.verifySignatures=false",
+                "merge",
+                "--ff-only",
+                candidate_commit,
+            ],
+            cwd=root,
+        )
+        try:
+            assert_promotion_postcondition(
+                root,
+                expected_head=candidate_commit,
+                expected_tree_sha256=candidate_tree_sha256,
+            )
+        except PromotionIntegrityError as error:
+            result["status"] = "promotion_postcondition_failed"
+            result["error"] = str(error)
+            result["promoted"] = (
+                git_output(["rev-parse", "HEAD"], root) == candidate_commit
+            )
+            ledger.append("promotion.postcondition_failed", result)
+            return result
         result["promoted"] = True
     elif not auto_promote:
         assert_root_unchanged(root, root_snapshot)

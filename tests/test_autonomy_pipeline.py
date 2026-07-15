@@ -151,6 +151,44 @@ def test_gate_commands_are_pinned_to_current_python(monkeypatch, tmp_path: Path)
     )
 
 
+def test_gate_rejects_any_preregistered_contract_byte_change(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    (tmp_path / "autonomy").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "autonomy/gates.json").write_text(
+        json.dumps(
+            {
+                "commands": [
+                    {"name": "compile", "command": ["python", "-m", "compileall", "src"]}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = tmp_path / "results/experiments/H001/experiment.json"
+    contract.parent.mkdir(parents=True)
+    contract.write_text('{"locked":true}\n', encoding="utf-8")
+    contract_sha256 = runner.sha256_file(contract)
+
+    def mutating_run(command, **kwargs):
+        contract.write_text('{"locked": true}\n', encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(runner, "run", mutating_run)
+    ledger = runner.EventLedger(tmp_path / "state/events.jsonl")
+
+    with pytest.raises(runner.CandidateIntegrityError, match="experiment contract changed"):
+        runner.run_gates(
+            tmp_path,
+            ledger,
+            tmp_path,
+            contract_path=contract,
+            contract_sha256=contract_sha256,
+        )
+
+
 def test_allowed_file_paths_honor_file_and_directory_boundaries() -> None:
     runner = load_runner()
     hypothesis = runner.Hypothesis(
@@ -543,17 +581,7 @@ def test_experiment_contract_locks_preregistered_fields(tmp_path: Path) -> None:
     )
     contract_path = tmp_path / "results/experiments/H001/experiment.json"
     contract_path.parent.mkdir(parents=True)
-    payload = {
-        "schema_version": 1,
-        "hypothesis_id": "H001",
-        "baseline_sha256": "abc123",
-        "independent_variable": "forward-influence routing",
-        "controls": ["committed baseline"],
-        "split_discipline": "fixed benchmark plus post-hoc holdout",
-        "primary_metric": "output_nmse",
-        "stopping_rule": "one bounded implementation attempt",
-        "disconfirming_condition": "less than five percent improvement",
-    }
+    payload = runner.experiment_contract_for(hypothesis, "abc123")
     contract_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert runner.validate_experiment_contract(tmp_path, hypothesis, "abc123") == payload
@@ -575,6 +603,110 @@ def test_root_integrity_guard_fails_when_tracked_snapshot_changes(
     with pytest.raises(runner.RootIntegrityError, match="tracked_tree_sha256"):
         with runner.root_integrity_guard(tmp_path, original):
             pass
+
+
+def test_promotion_postcondition_requires_head_clean_status_and_matching_tree(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    state = {"head": "candidate-commit", "status": "", "tree": "tree-digest"}
+
+    def fake_git_output(args, cwd):
+        if args[:2] == ["rev-parse", "HEAD"]:
+            return state["head"]
+        if args[:2] == ["status", "--porcelain"]:
+            return state["status"]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(runner, "git_output", fake_git_output)
+    monkeypatch.setattr(runner, "tracked_tree_sha256", lambda root: state["tree"])
+
+    runner.assert_promotion_postcondition(
+        tmp_path,
+        expected_head="candidate-commit",
+        expected_tree_sha256="tree-digest",
+    )
+
+    state["status"] = " M README.md"
+    with pytest.raises(runner.PromotionIntegrityError, match="status"):
+        runner.assert_promotion_postcondition(
+            tmp_path,
+            expected_head="candidate-commit",
+            expected_tree_sha256="tree-digest",
+        )
+
+
+def test_candidate_commit_must_match_fixed_parent_tree_and_paths(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    state = {"parents": "candidate parent"}
+
+    def fake_git_output(args, cwd):
+        if args[:2] == ["status", "--porcelain"]:
+            return ""
+        if args[:2] == ["rev-parse", "HEAD"]:
+            return "candidate"
+        if args[:3] == ["rev-list", "--parents", "-n"]:
+            return state["parents"]
+        if args[:2] == ["rev-parse", "candidate^{tree}"]:
+            return "fixed-tree"
+        if args[0] == "diff-tree":
+            return "results/experiments/H001/experiment.json\nsrc/code.py"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(runner, "git_output", fake_git_output)
+    monkeypatch.setattr(runner, "tracked_tree_sha256", lambda root: "actual-tree")
+
+    assert runner.capture_clean_candidate_commit(
+        tmp_path,
+        expected_parent="parent",
+        expected_tree="fixed-tree",
+        expected_paths=["src/code.py", "results/experiments/H001/experiment.json"],
+    ) == ("candidate", "actual-tree")
+
+    state["parents"] = "injected parent candidate"
+    with pytest.raises(runner.PromotionIntegrityError, match="ancestry"):
+        runner.capture_clean_candidate_commit(
+            tmp_path,
+            expected_parent="parent",
+            expected_tree="fixed-tree",
+            expected_paths=["src/code.py", "results/experiments/H001/experiment.json"],
+        )
+
+
+def test_plumbing_stage_binds_exact_regular_file_bytes(tmp_path: Path) -> None:
+    runner = load_runner()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    git("init")
+    git("config", "user.name", "Autonomy Test")
+    git("config", "user.email", "autonomy@example.invalid")
+    (repo / "tracked.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "deleted.txt").write_text("delete me\n", encoding="utf-8")
+    git("add", "--", "tracked.py", "deleted.txt")
+    git("commit", "-m", "fixture")
+
+    (repo / "tracked.py").write_text("value = 2\n", encoding="utf-8")
+    (repo / "new.json").write_text('{"new":true}\n', encoding="utf-8")
+    (repo / "deleted.txt").unlink()
+    paths = ["tracked.py", "new.json", "deleted.txt"]
+    expected = runner.candidate_blob_map(repo, paths)
+
+    runner.stage_validated_paths(repo, paths)
+
+    assert runner.staged_blob_map(repo, paths) == expected
 
 
 def test_subagent_hook_evidence_requires_start_stop_and_expected_model(
@@ -728,6 +860,17 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
             return subprocess.CompletedProcess(command, 0, "", "")
         if Path(command[0]) == runtime.path:
             worktree = kwargs["cwd"]
+            experiment = (
+                worktree
+                / "results/experiments/H001-forward-influence-routing/experiment.json"
+            )
+            assert experiment.is_file()
+            assert json.loads(experiment.read_text(encoding="utf-8")) == (
+                runner.experiment_contract_for(
+                    hypothesis,
+                    runner.sha256_file(root / "results/fabric_benchmark.json"),
+                )
+            )
             result_path = (
                 worktree
                 / "autonomy/state/runs/H001-forward-influence-routing/agent-result.json"
@@ -738,37 +881,11 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
                     {
                         "status": "completed",
                         "summary": "candidate ready",
-                        "changed_files": [
-                            "src/focus_fabric/codecs.py",
-                            "results/experiments/H001-forward-influence-routing/experiment.json",
-                        ],
+                        "changed_files": ["src/focus_fabric/codecs.py"],
                         "evidence": ["tests passed"],
                         "risks": [],
                         "negative_results": [],
                         "next_hypotheses": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            experiment = (
-                worktree
-                / "results/experiments/H001-forward-influence-routing/experiment.json"
-            )
-            experiment.parent.mkdir(parents=True, exist_ok=True)
-            experiment.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "hypothesis_id": "H001-forward-influence-routing",
-                        "baseline_sha256": runner.sha256_file(
-                            root / "results/fabric_benchmark.json"
-                        ),
-                        "independent_variable": "candidate routing change",
-                        "controls": [],
-                        "split_discipline": "fixed benchmark and post-hoc holdout",
-                        "primary_metric": "synthetic.in_distribution.output_nmse",
-                        "stopping_rule": "one bounded implementation attempt",
-                        "disconfirming_condition": "condition",
                     }
                 ),
                 encoding="utf-8",
@@ -809,21 +926,19 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
             "src/focus_fabric/codecs.py",
         ],
     )
-    monkeypatch.setattr(
-        runner,
-        "run_gates",
-        lambda worktree, ledger, trusted_root, root_snapshot=None: [{"returncode": 0}],
-    )
-    monkeypatch.setattr(
-        runner,
-        "run_trusted_root_tests",
-        lambda root, worktree, ledger, root_snapshot=None: {"returncode": 0},
-    )
-    monkeypatch.setattr(
-        runner,
-        "run_external_holdout",
-        lambda root, worktree, hypothesis, ledger, root_snapshot=None: {"passed": True},
-    )
+
+    def passing_gates(*args, **kwargs):
+        return [{"returncode": 0}]
+
+    def passing_trusted_tests(*args, **kwargs):
+        return {"returncode": 0}
+
+    def passing_holdout(*args, **kwargs):
+        return {"passed": True}
+
+    monkeypatch.setattr(runner, "run_gates", passing_gates)
+    monkeypatch.setattr(runner, "run_trusted_root_tests", passing_trusted_tests)
+    monkeypatch.setattr(runner, "run_external_holdout", passing_holdout)
     monkeypatch.setattr(
         runner,
         "compare_candidate",
@@ -842,5 +957,15 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
 
     assert result["status"] == "accepted"
     assert result["promoted"] is False
+    assert result["agent_changed_files"] == ["src/focus_fabric/codecs.py"]
     assert not any(command[:2] == ["git", "commit"] for command in commands)
     assert not any(command[:2] == ["git", "merge"] for command in commands)
+    events = [
+        json.loads(line)["event"]
+        for line in (root / "autonomy/state/events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert events.index("experiment_contract.preregistered") < events.index(
+        "codex.started"
+    )
