@@ -793,7 +793,9 @@ def test_trusted_checkpoint_fails_closed_on_missing_or_wrong_bytes(
         runner.trusted_checkpoint_file(tmp_path)
 
 
-def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None:
+def test_preflight_fails_closed_when_codex_is_not_logged_in(
+    monkeypatch, tmp_path: Path
+) -> None:
     runner = load_runner()
     # The trusted outer gate deliberately runs a linked candidate worktree with
     # the root checkout's interpreter.  Make this preflight unit test assert its
@@ -818,6 +820,9 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
             "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         },
     )
+    session_root = tmp_path / "codex-home" / "sessions"
+    session_root.mkdir(parents=True)
+    monkeypatch.setattr(runner, "codex_session_root", lambda _: session_root)
     runtime = runner.CodexRuntime(ROOT / "fake-codex.exe", "codex-cli 0.144.2")
     hypothesis = runner.Hypothesis(
         identifier="H001-forward-influence-routing",
