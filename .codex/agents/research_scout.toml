@@ -1,6 +1,6 @@
 name = "research_scout"
 description = "Read-only literature and prior-art scout for long-context memory, compression, recurrent architectures, verification, and agent memory."
-model = "gpt-5.6-terra"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """

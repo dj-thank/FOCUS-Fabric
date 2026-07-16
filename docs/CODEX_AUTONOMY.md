@@ -36,16 +36,21 @@ Codex project config is loaded only for a trusted exact project path. A dynamica
 Every live command therefore:
 
 - discovers and probes the installed Codex Desktop runtimes instead of trusting the first PATH shim;
-- uses `gpt-5.6-sol` for the root and the checked-in Sol/Terra specialist profiles;
+- uses `gpt-5.6-sol` for the root and a checked-in `gpt-5.6-luna` default for
+  every bounded specialist task;
 - registers every `.codex/agents/*.toml` profile through CLI config overrides;
 - enables multi-agent execution with bounded depth and concurrency;
-- ignores user config and enables only the checked-in `SubagentStart`/`SubagentStop`
-  recorder;
+- requires every specialist spawn to use `fork_turns="none"`, an exact role task
+  name, and a self-contained message carrying the checked-in role contract;
+- ignores user config and does not enable command hooks;
 - explicitly selects the native Windows `elevated` sandbox implementation,
   because ignoring user config would otherwise discard that machine-level
   selector even when `workspace-write` is requested;
-- writes role/model lifecycle evidence to an orchestrator-owned directory outside
-  the candidate worktree, where the candidate sandbox cannot forge it;
+- snapshots the host-owned Codex session directory before execution, then
+  verifies only newly created child-session metadata bound to the parent thread;
+- requires an exact role path, `task_complete`, the actual `gpt-5.6-luna`
+  runtime model in both model fields, and the OpenAI provider for every required
+  role; task names and display nicknames are never accepted as model evidence;
 - sets Codex workspace network access to false;
 - uses `workspace-write`, approval policy `never`, JSONL output, an output schema, and an ephemeral session.
 
@@ -86,10 +91,10 @@ Equivalent Make targets are `autonomy-preflight`, `autonomy-dry-run`, and `auton
 
 ## Execution lifecycle
 
-1. **Preflight** probes a working Codex executable, login state, current model catalog, supported CLI options, project venv, clean Git state, required artifacts, specialist profiles, and the selected evaluator. On native Windows it also runs a model-free `codex sandbox` check that must create a temporary workspace sentinel; parsing `--help` alone is not accepted as proof of write access.
+1. **Preflight** probes a working Codex executable, login state, current model catalog, supported CLI options, project venv, clean Git state, required artifacts, specialist profiles, bounded host-session metadata access, and the selected evaluator. On native Windows it also runs a model-free `codex sandbox` check that must create a temporary workspace sentinel; parsing `--help` alone is not accepted as proof of write access.
 2. **Preregistration** loads the hypothesis, controls, falsifier, primary metric, allowed paths, and baseline SHA-256. The outer runner writes the complete `experiment.json` and records its byte SHA-256 before Codex starts. The same bytes are required after Codex, after every host-side candidate process, before acceptance, and before staging; the parsed payload must also exactly equal the generated contract.
 3. **Isolation** creates `../.focus-fabric-worktrees/<hypothesis>-<timestamp>` and records its starting commit.
-4. **Agent run** injects the checked-in specialist roles. The agent is forbidden to commit or alter Git history. Trusted lifecycle hooks record each required role's start, stop, and actual model outside the candidate worktree.
+4. **Agent run** injects the checked-in default and specialist role contracts. The agent is forbidden to commit or alter Git history. After Codex exits, the outer runner binds the CLI's `thread.started` id to newly created host session records and requires a completed runtime record for every role and configured model.
 5. **Validation** checks the final JSON schema/status, its hash, exact agreement between self-reported and Git-observed changes, history immutability, and exact file/directory boundaries. The same scope check runs again after gates and evidence generation.
 6. **Trusted gates** load `autonomy/gates.json` and the original test suite from the root checkout, while importing candidate source. Python commands are pinned to the project interpreter and receive a credential-free environment. Plotting is fixed to the headless `Agg` backend. After Codex and after every host-side candidate process, the runner verifies the root HEAD, status, baseline digest, and byte-level digest of every tracked root file before continuing.
 7. **Holdout and decision** compare root and candidate on the same seed generated only after the agent run, then apply the H001 metric contract.
@@ -99,12 +104,27 @@ Root ledger and run reports are written to ignored `autonomy/state/` and `result
 
 ## Failure behavior
 
-Codex command failure, model/config mismatch, unavailable native workspace-write sandbox, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
+Codex command failure, missing or ambiguous parent thread metadata, role/model/provider mismatch, unavailable native workspace-write sandbox, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
 
 The root lock is released in a `finally` block. A stale lock after a machine crash must be inspected before manual removal; never delete it while another cycle may still be running.
 
 ## Security boundary
 
-The inner Codex process is sandboxed and has workspace network access disabled. Both Codex and gate subprocesses start from small environment allowlists: Codex retains only the paths needed to discover the existing ChatGPT login, while API-key-like and unrelated credentials are not inherited. The one-off hook-trust bypass applies only to the explicit checked-in lifecycle recorder; user/global hooks remain ignored.
+The inner Codex process is sandboxed and has workspace network access disabled. Both Codex and gate subprocesses start from small environment allowlists: Codex retains only the paths needed to discover the existing ChatGPT login and host session metadata, while API-key-like and unrelated credentials are not inherited. Command hooks remain disabled. The verifier reads only the minimal session metadata needed for parent binding, role path, provider, runtime model, and completion; it does not copy transcript content into public evidence. Old session paths are snapshotted before the run and cannot satisfy a new run.
+
+The session files are host runtime records, not cryptographic backend attestations,
+and their wire format may evolve. The parser therefore fails closed when the
+required fields are absent or inconsistent. It rejects links and Windows
+junctions, bounds file count and matching-record size, and publishes only
+anonymous role counts rather than host session identifiers. The candidate
+sandbox cannot write to this directory; a model-free Windows A/B probe confirmed
+that the same process can write inside its candidate worktree but receives
+access denied for the host-owned evidence location.
+
+The outer runner can attest the child path, parent binding, provider, runtime
+model, and terminal completion record. Codex encrypts the actual inter-agent task
+payload in its local transcript, so the runner cannot independently attest the
+exact self-contained message body; the root prompt and checked-in role contracts
+remain the enforceable instruction layer for that part.
 
 This is still not a VM or container security boundary. Candidate Python is executed on the host during tests and benchmarks. Root-integrity snapshots detect persistent writes to tracked project files; they do not prevent transient writes, access to unrelated host files, or tampering outside the tracked tree. Use a dedicated VM/container for adversarial or third-party hypotheses, and never use `--dangerously-bypass-approvals-and-sandbox` on a normal workstation.

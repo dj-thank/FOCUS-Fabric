@@ -37,6 +37,10 @@ Every Codex session and subagent must follow these rules.
   hypothesis record before editing.
 - Delegate independent read-heavy work to specialized subagents.  Avoid
   parallel write-heavy edits to the same files.
+- In autonomous runs, every `spawn_agent` call uses `fork_turns="none"`, an
+  exact role `task_name`, and a self-contained message containing the relevant
+  `.codex/agents/<role>.toml` contract.  Task names and nicknames are not model
+  evidence; only host runtime metadata may satisfy the routing gate.
 - Add or update tests before claiming a mechanism works.
 - Run `make gate` before returning a completion result.
 - Put raw measurements under `results/`; do not hand-edit generated metrics.

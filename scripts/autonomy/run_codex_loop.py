@@ -19,7 +19,6 @@ import math
 import os
 import re
 import secrets
-import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -29,6 +28,8 @@ from typing import Any, Iterable, Iterator
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WORKTREE_ROOT = ROOT.parent / ".focus-fabric-worktrees"
 SUPPORTED_EVALUATORS = {"fabric_benchmark_v1"}
+MAX_CODEX_SESSION_FILES = 100_000
+MAX_CODEX_SESSION_BYTES = 16 * 1024 * 1024
 REQUIRED_RESEARCH_ROLES = {
     "research_scout",
     "memory_redteam",
@@ -275,8 +276,6 @@ def build_codex_exec_command(
     schema_path: Path,
     result_path: Path,
     project_root: Path = ROOT,
-    trusted_root: Path = ROOT,
-    hook_event_dir: Path | None = None,
 ) -> list[str]:
     """Build a noninteractive command using options accepted by current Codex."""
 
@@ -289,9 +288,6 @@ def build_codex_exec_command(
         "--ignore-user-config",
         "--enable",
         "multi_agent",
-        "--enable",
-        "hooks",
-        "--dangerously-bypass-hook-trust",
         "-m",
         project_root_model(project_root),
         "-c",
@@ -347,30 +343,6 @@ def build_codex_exec_command(
                 f"agents.{name}.config_file={json.dumps(str(profile.resolve()))}",
             ]
         )
-    hook_script = trusted_root / "scripts/autonomy/record_subagent_event.py"
-    if not hook_script.is_file():
-        raise PipelineError(f"subagent evidence hook missing: {hook_script}")
-    event_dir = (
-        hook_event_dir
-        if hook_event_dir is not None
-        else trusted_root / "autonomy/state/subagent-events/command-preview"
-    ).resolve()
-    hook_command = (
-        subprocess.list2cmdline(
-            [sys.executable, str(hook_script.resolve()), "--output-dir", str(event_dir)]
-        )
-        if os.name == "nt"
-        else shlex.join(
-            [sys.executable, str(hook_script.resolve()), "--output-dir", str(event_dir)]
-        )
-    )
-    for event_name in ("SubagentStart", "SubagentStop"):
-        handler = (
-            '[{matcher=".*",hooks=[{type="command",'
-            f"command={json.dumps(hook_command)},"
-            f"command_windows={json.dumps(hook_command)},timeout=30}}]}}]"
-        )
-        overrides.extend(["-c", f"hooks.{event_name}={handler}"])
     command[insertion_point:insertion_point] = overrides
     return command
 
@@ -539,6 +511,91 @@ def codex_cli_environment() -> dict[str, str]:
         if key in os.environ:
             environment[key] = os.environ[key]
     return environment
+
+
+def codex_session_root(environment: dict[str, str]) -> Path:
+    """Locate host-owned Codex session metadata without trusting the candidate."""
+
+    configured = environment.get("CODEX_HOME")
+    if configured:
+        return (Path(configured).expanduser() / "sessions").resolve(strict=False)
+    user_home = environment.get("USERPROFILE") or environment.get("HOME")
+    if not user_home:
+        raise PipelineError("Codex session root is unavailable: no CODEX_HOME or user home")
+    return (Path(user_home).expanduser() / ".codex" / "sessions").resolve(strict=False)
+
+
+def snapshot_codex_session_files(session_root: Path) -> frozenset[Path]:
+    """Snapshot existing session logs so an old matching record cannot be replayed."""
+
+    return frozenset(iter_codex_session_files(session_root))
+
+
+def iter_codex_session_files(session_root: Path) -> Iterator[Path]:
+    """Yield bounded regular session files without following links or junctions."""
+
+    if not session_root.is_dir():
+        return
+    is_junction = getattr(os.path, "isjunction", lambda _: False)
+    if session_root.is_symlink() or is_junction(session_root):
+        raise PipelineError(f"Codex session root must not be a link: {session_root}")
+    resolved_root = session_root.resolve()
+    count = 0
+    for current, directory_names, file_names in os.walk(
+        session_root, topdown=True, followlinks=False
+    ):
+        current_path = Path(current)
+        safe_directories: list[str] = []
+        for name in sorted(directory_names):
+            child = current_path / name
+            if child.is_symlink() or is_junction(child):
+                continue
+            try:
+                resolved_child = child.resolve()
+            except OSError:
+                continue
+            if resolved_child.is_relative_to(resolved_root):
+                safe_directories.append(name)
+        directory_names[:] = safe_directories
+        for name in sorted(file_names):
+            if not name.endswith(".jsonl"):
+                continue
+            path = current_path / name
+            if path.is_symlink() or is_junction(path) or not path.is_file():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if not resolved.is_relative_to(resolved_root):
+                continue
+            count += 1
+            if count > MAX_CODEX_SESSION_FILES:
+                raise PipelineError(
+                    "Codex session metadata exceeds the bounded file-count limit"
+                )
+            yield resolved
+
+
+def codex_thread_id(events_jsonl: str) -> str:
+    """Extract the parent thread id only from Codex's top-level JSONL envelope."""
+
+    identifiers: set[str] = set()
+    for line in events_jsonl.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("type") != "thread.started":
+            continue
+        identifier = str(record.get("thread_id", ""))
+        if re.fullmatch(r"[A-Za-z0-9-]+", identifier):
+            identifiers.add(identifier)
+    if len(identifiers) != 1:
+        raise PipelineError(
+            "Codex JSONL must contain exactly one valid thread.started identifier"
+        )
+    return next(iter(identifiers))
 
 
 def git_command(args: Iterable[str], cwd: Path) -> list[str]:
@@ -799,9 +856,23 @@ def preflight_report(
     bootstrap_ready = False
     workspace_write_ready = False
     workspace_write_detail = "not checked"
+    session_metadata_ready = False
+    session_metadata_detail = "not checked"
     try:
         runtime = resolve_codex_runtime(requested_codex)
         codex_environment = codex_cli_environment()
+        try:
+            session_root = codex_session_root(codex_environment)
+            session_count = len(snapshot_codex_session_files(session_root))
+            session_metadata_ready = True
+            session_metadata_detail = (
+                f"host session metadata accessible ({session_count} existing files)"
+            )
+        except (PipelineError, OSError) as error:
+            session_metadata_detail = str(error)
+            blockers.append(
+                "Codex host session metadata is unavailable: " + str(error)
+            )
         login = run(
             [str(runtime.path), "login", "status"],
             cwd=root,
@@ -867,7 +938,6 @@ def preflight_report(
             schema_path=root / "autonomy/schemas/agent_result.schema.json",
             result_path=Path("autonomy/state/preflight-agent-result.json"),
             project_root=root,
-            trusted_root=root,
         )
         bootstrap_probe[-1] = "--help"
         bootstrap_result = run(
@@ -913,6 +983,7 @@ def preflight_report(
         and root_clean
         and logged_in
         and workspace_write_ready
+        and session_metadata_ready
         and not unsupported
     )
     if ready_for_dry_run and not ready_for_execute:
@@ -938,6 +1009,8 @@ def preflight_report(
         "bootstrap_ready": bootstrap_ready,
         "workspace_write_ready": workspace_write_ready,
         "workspace_write_detail": workspace_write_detail,
+        "session_metadata_ready": session_metadata_ready,
+        "session_metadata_detail": session_metadata_detail,
         "required_models": required_models,
         "catalog_models": catalog_models,
         "model_catalog_ready": model_catalog_ready,
@@ -992,7 +1065,11 @@ def prompt_for(hypothesis: Hypothesis, baseline_digest: str) -> str:
     experiment_contract = experiment_contract_for(hypothesis, baseline_digest)
     return f"""You are the root research agent for hypothesis {hypothesis.identifier}.
 
-Read AGENTS.md and follow this preregistered research protocol. Spawn
+Read AGENTS.md and follow this preregistered research protocol. For every
+`spawn_agent` call, set `fork_turns="none"`, use the exact role below as
+`task_name`, and put all needed experiment context plus that role's checked-in
+`.codex/agents/<role>.toml` instructions in the message. A task name or nickname
+is not model evidence; the outer runner verifies host runtime metadata. Spawn
 research_scout and memory_redteam first, wait for both, then use
 architecture_scientist. Use
 kernel_engineer only if a tested reference requires a GPU path. After changes,
@@ -1429,47 +1506,149 @@ def validate_experiment_contract(
 
 
 def subagent_role_evidence(
-    event_dir: Path,
+    session_root: Path,
+    previous_paths: frozenset[Path],
+    parent_thread_id: str,
     expected_models: dict[str, str],
 ) -> dict[str, dict[str, Any]]:
-    """Verify role, model, start, and stop from orchestrator-owned hook records."""
+    """Verify completed roles and actual models from host-owned runtime metadata."""
 
-    records: list[dict[str, Any]] = []
-    for path in sorted(event_dir.glob("*.json")):
+    role_sessions: dict[str, list[dict[str, Any]]] = {
+        role: [] for role in expected_models
+    }
+    for resolved_path in iter_codex_session_files(session_root):
+        if resolved_path in previous_paths:
+            continue
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            before_stat = resolved_path.stat()
+            with resolved_path.open(encoding="utf-8") as handle:
+                first_line = handle.readline(1_000_001)
+                if not first_line.endswith("\n"):
+                    continue
+                first_record = json.loads(first_line)
+                if (
+                    not isinstance(first_record, dict)
+                    or first_record.get("type") != "session_meta"
+                ):
+                    continue
+                metadata = first_record.get("payload")
+                if not isinstance(metadata, dict):
+                    continue
+                if metadata.get("parent_thread_id") != parent_thread_id:
+                    continue
+                if before_stat.st_size > MAX_CODEX_SESSION_BYTES:
+                    raise PipelineError(
+                        "matching Codex session metadata exceeds the size limit"
+                    )
+                source = metadata.get("source")
+                if not isinstance(source, dict):
+                    continue
+                subagent = source.get("subagent")
+                if not isinstance(subagent, dict):
+                    continue
+                spawn = subagent.get("thread_spawn")
+                if not isinstance(spawn, dict):
+                    continue
+                agent_path = str(spawn.get("agent_path", ""))
+                if (
+                    metadata.get("thread_source") != "subagent"
+                    or str(metadata.get("agent_path", "")) != agent_path
+                    or spawn.get("parent_thread_id") != parent_thread_id
+                    or spawn.get("depth") != 1
+                ):
+                    continue
+                matching_roles = [
+                    role for role in expected_models if agent_path == f"/root/{role}"
+                ]
+                if len(matching_roles) != 1:
+                    continue
+                role = matching_roles[0]
+                runtime_models: set[str] = set()
+                collaboration_models: set[str] = set()
+                terminal_record: tuple[str, str] = ("session_meta", "")
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    payload = record.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    record_type = str(record.get("type", ""))
+                    terminal_record = (record_type, str(payload.get("type", "")))
+                    if record_type == "turn_context":
+                        model = payload.get("model")
+                        if isinstance(model, str) and model:
+                            runtime_models.add(model)
+                        collaboration = payload.get("collaboration_mode")
+                        if isinstance(collaboration, dict):
+                            settings = collaboration.get("settings")
+                            if isinstance(settings, dict):
+                                collaboration_model = settings.get("model")
+                                if (
+                                    isinstance(collaboration_model, str)
+                                    and collaboration_model
+                                ):
+                                    collaboration_models.add(collaboration_model)
+            after_stat = resolved_path.stat()
         except (OSError, json.JSONDecodeError):
             continue
-        if isinstance(payload, dict):
-            records.append(payload)
+        if (before_stat.st_size, before_stat.st_mtime_ns) != (
+            after_stat.st_size,
+            after_stat.st_mtime_ns,
+        ):
+            raise PipelineError("Codex session metadata changed during verification")
+        completed = terminal_record == ("event_msg", "task_complete")
+        session_id = str(metadata.get("id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
+            continue
+        role_sessions[role].append(
+            {
+                "session_id": session_id,
+                "provider": str(metadata.get("model_provider", "")),
+                "runtime_models": runtime_models,
+                "collaboration_models": collaboration_models,
+                "completed": completed,
+            }
+        )
 
     report: dict[str, dict[str, Any]] = {}
     for role, expected_model in sorted(expected_models.items()):
-        role_records = [item for item in records if item.get("agent_type") == role]
-        agent_ids = {str(item.get("agent_id", "")) for item in role_records}
-        completed_ids: list[str] = []
-        completed_models: set[str] = set()
-        for agent_id in sorted(agent_ids):
-            lifecycle = {
-                str(item.get("hook_event_name", ""))
-                for item in role_records
-                if str(item.get("agent_id", "")) == agent_id
+        sessions = role_sessions[role]
+        completed_sessions = [item for item in sessions if item["completed"]]
+        observed_models = sorted(
+            {
+                model
+                for item in sessions
+                for model in (
+                    item["runtime_models"] | item["collaboration_models"]
+                )
             }
-            models = {
-                str(item.get("model", ""))
-                for item in role_records
-                if str(item.get("agent_id", "")) == agent_id
-            }
-            if {"SubagentStart", "SubagentStop"}.issubset(lifecycle):
-                completed_ids.append(agent_id)
-                completed_models.update(models)
-        model_routed = bool(completed_ids) and completed_models == {expected_model}
+        )
+        observed_providers = sorted({item["provider"] for item in sessions})
+        model_routed = bool(completed_sessions) and all(
+            item["runtime_models"] == {expected_model}
+            and item["collaboration_models"] == {expected_model}
+            for item in completed_sessions
+        )
+        provider_routed = bool(completed_sessions) and all(
+            item["provider"] == "openai" for item in completed_sessions
+        )
+        completed_ids = sorted(item["session_id"] for item in completed_sessions)
+        incomplete_ids = sorted(
+            item["session_id"] for item in sessions if not item["completed"]
+        )
         report[role] = {
             "expected_model": expected_model,
-            "completed_agent_ids": completed_ids,
-            "observed_models": sorted(completed_models),
+            "completed_session_ids": completed_ids,
+            "incomplete_session_ids": incomplete_ids,
+            "observed_models": observed_models,
+            "observed_providers": observed_providers,
             "model_routed": model_routed,
-            "passed": bool(completed_ids and model_routed),
+            "provider_routed": provider_routed,
+            "passed": bool(completed_ids and model_routed and provider_routed),
         }
     return report
 
@@ -1577,7 +1756,6 @@ def write_public_orchestrator_result(path: Path, result: dict[str, Any]) -> None
         "branch",
         "agent_changed_files",
         "changed_files",
-        "role_evidence",
         "promotion_requested",
         "promotion_eligible",
         "promotion_blocked",
@@ -1587,6 +1765,21 @@ def write_public_orchestrator_result(path: Path, result: dict[str, Any]) -> None
         key: value
         for key, value in result.items()
         if key in public_keys
+    }
+    private_role_evidence = result.get("role_evidence", {})
+    public_result["role_evidence"] = {
+        role: {
+            "expected_model": item.get("expected_model"),
+            "completed_count": len(item.get("completed_session_ids", [])),
+            "incomplete_count": len(item.get("incomplete_session_ids", [])),
+            "observed_models": item.get("observed_models", []),
+            "observed_providers": item.get("observed_providers", []),
+            "model_routed": item.get("model_routed", False),
+            "provider_routed": item.get("provider_routed", False),
+            "passed": item.get("passed", False),
+        }
+        for role, item in sorted(private_role_evidence.items())
+        if isinstance(role, str) and isinstance(item, dict)
     }
     public_result["gates"] = [
         {
@@ -1809,7 +2002,6 @@ def dry_run_plan(
                     schema_path=root / "autonomy/schemas/agent_result.schema.json",
                     result_path=result_path,
                     project_root=root,
-                    trusted_root=root,
                 ),
                 "automated_evaluator": hypothesis.evaluator,
                 "executable": hypothesis.evaluator in SUPPORTED_EVALUATORS,
@@ -1869,6 +2061,9 @@ def execute_one(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     branch = f"autonomy/{slug(hypothesis.identifier)}-{timestamp}"
     worktree = worktree_root / f"{slug(hypothesis.identifier)}-{timestamp}"
+    codex_environment = codex_cli_environment()
+    session_root = codex_session_root(codex_environment)
+    previous_session_paths = snapshot_codex_session_files(session_root)
     baseline = root / "results/fabric_benchmark.json"
     baseline_digest = sha256_file(baseline)
     root_snapshot = capture_root_snapshot(root)
@@ -1892,20 +2087,12 @@ def execute_one(
     private_run_dir.mkdir(parents=True, exist_ok=True)
     event_path = private_run_dir / "codex-events.jsonl"
     result_path = private_run_dir / "agent-result.json"
-    hook_event_dir = (
-        root
-        / "autonomy/state/subagent-events"
-        / f"{slug(hypothesis.identifier)}-{timestamp}-{secrets.token_hex(8)}"
-    )
-    hook_event_dir.mkdir(parents=True, exist_ok=False)
     prompt = prompt_for(hypothesis, baseline_digest)
     command = build_codex_exec_command(
         runtime,
         schema_path=worktree / "autonomy/schemas/agent_result.schema.json",
         result_path=result_path.relative_to(worktree),
         project_root=worktree,
-        trusted_root=root,
-        hook_event_dir=hook_event_dir,
     )
     ledger.append(
         "experiment_contract.preregistered",
@@ -1925,7 +2112,7 @@ def execute_one(
                 command,
                 cwd=worktree,
                 timeout=7200,
-                environment=codex_cli_environment(),
+                environment=codex_environment,
                 inherit_environment=False,
                 input_text=prompt,
                 check=False,
@@ -2034,7 +2221,27 @@ def execute_one(
         for role in REQUIRED_RESEARCH_ROLES
         if role in configured_models
     }
-    role_evidence = subagent_role_evidence(hook_event_dir, expected_models)
+    try:
+        parent_thread_id = codex_thread_id(completed.stdout)
+        role_evidence = subagent_role_evidence(
+            session_root,
+            previous_session_paths,
+            parent_thread_id,
+            expected_models,
+        )
+    except PipelineError as error:
+        ledger.append(
+            "agent_roles.failed",
+            {"hypothesis": hypothesis.identifier, "error": str(error)},
+        )
+        return {
+            "hypothesis": hypothesis.identifier,
+            "status": "agent_routing_failed",
+            "branch": branch,
+            "worktree": str(worktree),
+            "error": str(error),
+            "missing_roles": sorted(REQUIRED_RESEARCH_ROLES),
+        }
     missing_roles = sorted(
         role for role in REQUIRED_RESEARCH_ROLES if not role_evidence.get(role, {}).get("passed")
     )

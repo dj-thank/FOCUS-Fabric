@@ -1,0 +1,12 @@
+name = "default"
+description = "Default bounded subagent used by the autonomous research runner; the task message supplies the specialist role contract."
+model = "gpt-5.6-luna"
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Complete exactly one bounded assignment from the parent. Treat the task name as
+a work label, not as model evidence. Do not spawn descendants. Preserve
+negative findings, cite exact repository evidence, and return a concise result
+to the parent. The outer runner verifies the actual model from host-owned Codex
+runtime metadata.
+"""

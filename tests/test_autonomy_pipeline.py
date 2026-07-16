@@ -34,6 +34,62 @@ def load_hook_recorder():
     return module
 
 
+def write_subagent_session(
+    path: Path,
+    *,
+    parent_thread_id: str,
+    role: str,
+    model: str,
+    session_id: str,
+    provider: str = "openai",
+    completed: bool = True,
+    spawn_parent_thread_id: str | None = None,
+    metadata_agent_path: str | None = None,
+    thread_source: str = "subagent",
+    trailing_event: bool = False,
+) -> None:
+    agent_path = f"/root/{role}"
+    records = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "parent_thread_id": parent_thread_id,
+                "thread_source": thread_source,
+                "agent_path": metadata_agent_path or agent_path,
+                "model_provider": provider,
+                "source": {
+                    "subagent": {
+                        "thread_spawn": {
+                            "parent_thread_id": (
+                                spawn_parent_thread_id or parent_thread_id
+                            ),
+                            "depth": 1,
+                            "agent_path": agent_path,
+                        }
+                    }
+                },
+            },
+        },
+        {
+            "type": "turn_context",
+            "payload": {
+                "model": model,
+                "collaboration_mode": {"settings": {"model": model}},
+            },
+        },
+    ]
+    if completed:
+        records.append({"type": "event_msg", "payload": {"type": "task_complete"}})
+    if trailing_event:
+        records.append({"type": "event_msg", "payload": {"type": "token_count"}})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
 def test_codex_runtime_skips_a_broken_path_shim(monkeypatch, tmp_path: Path) -> None:
     runner = load_runner()
     broken = tmp_path / "codex.cmd"
@@ -101,17 +157,16 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
     assert any(
         item.startswith("agents.research_scout.config_file=") for item in command
     )
+    assert any(item.startswith("agents.default.config_file=") for item in command)
     assert "sandbox_workspace_write.network_access=false" in command
     if os.name == "nt":
         assert 'windows.sandbox="elevated"' in command
     assert "allow_login_shell=false" in command
     assert 'shell_environment_policy.inherit="core"' in command
     enabled = [command[index + 1] for index, item in enumerate(command) if item == "--enable"]
-    assert enabled == ["multi_agent", "hooks"]
-    assert "--dangerously-bypass-hook-trust" in command
-    assert any(item.startswith("hooks.SubagentStart=") for item in command)
-    assert any(item.startswith("hooks.SubagentStop=") for item in command)
-    assert any("--output-dir" in item for item in command)
+    assert enabled == ["multi_agent"]
+    assert "--dangerously-bypass-hook-trust" not in command
+    assert not any(item.startswith("hooks.") for item in command)
     assert command[-1] == "-"
 
 
@@ -502,6 +557,18 @@ def test_public_orchestrator_result_omits_host_paths_and_actual_merge_state(
             "promoted": True,
             "promotion_requested": True,
             "promotion_eligible": True,
+            "role_evidence": {
+                "research_scout": {
+                    "expected_model": "gpt-5.6-luna",
+                    "completed_session_ids": ["private-session-id"],
+                    "incomplete_session_ids": ["private-incomplete-id"],
+                    "observed_models": ["gpt-5.6-luna"],
+                    "observed_providers": ["openai"],
+                    "model_routed": True,
+                    "provider_routed": True,
+                    "passed": True,
+                }
+            },
             "gates": [
                 {
                     "name": "tests",
@@ -522,6 +589,10 @@ def test_public_orchestrator_result_omits_host_paths_and_actual_merge_state(
     assert private_path not in serialized
     assert "worktree" not in payload
     assert "promoted" not in payload
+    assert "private-session-id" not in serialized
+    assert "private-incomplete-id" not in serialized
+    assert payload["role_evidence"]["research_scout"]["completed_count"] == 1
+    assert payload["role_evidence"]["research_scout"]["incomplete_count"] == 1
     assert payload["gates"] == [
         {"name": "tests", "requested_command": ["pytest", "-q"], "returncode": 0}
     ]
@@ -605,7 +676,7 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
                     {
                         "models": [
                             {"slug": "gpt-5.6-sol"},
-                            {"slug": "gpt-5.6-terra"},
+                            {"slug": "gpt-5.6-luna"},
                         ]
                     }
                 ),
@@ -622,6 +693,7 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
     assert report["ready_for_dry_run"] is True
     assert report["ready_for_execute"] is False
     assert report["workspace_write_ready"] is True
+    assert report["session_metadata_ready"] is True
     assert any("logged in" in blocker.lower() for blocker in report["blockers"])
 
     monkeypatch.setattr(
@@ -808,42 +880,156 @@ def test_plumbing_stage_binds_exact_regular_file_bytes(tmp_path: Path) -> None:
     assert runner.staged_blob_map(repo, paths) == expected
 
 
-def test_subagent_hook_evidence_requires_start_stop_and_expected_model(
+def test_subagent_session_evidence_requires_new_completed_runtime_metadata(
     tmp_path: Path,
 ) -> None:
     runner = load_runner()
-    event_dir = tmp_path / "autonomy/state/subagent-events"
-    event_dir.mkdir(parents=True)
-    (event_dir / "SubagentStart-agent-1.json").write_text(
-        json.dumps(
-            {
-                "hook_event_name": "SubagentStart",
-                "agent_id": "agent-1",
-                "agent_type": "research_scout",
-                "model": "gpt-5.6-terra",
-            }
-        ),
-        encoding="utf-8",
+    session_root = tmp_path / "sessions"
+    old_path = session_root / "2026/07/17/old.jsonl"
+    write_subagent_session(
+        old_path,
+        parent_thread_id="root-thread",
+        role="research_scout",
+        model="gpt-5.6-luna",
+        session_id="old-forged-session",
     )
-    (event_dir / "SubagentStop-agent-1.json").write_text(
-        json.dumps(
-            {
-                "hook_event_name": "SubagentStop",
-                "agent_id": "agent-1",
-                "agent_type": "research_scout",
-                "model": "gpt-5.6-terra",
-            }
-        ),
-        encoding="utf-8",
+    previous_paths = runner.snapshot_codex_session_files(session_root)
+    write_subagent_session(
+        session_root / "2026/07/17/research.jsonl",
+        parent_thread_id="root-thread",
+        role="research_scout",
+        model="gpt-5.6-luna",
+        session_id="research-session",
+    )
+    write_subagent_session(
+        session_root / "2026/07/17/memory.jsonl",
+        parent_thread_id="root-thread",
+        role="memory_redteam",
+        model="gpt-5.6-sol",
+        session_id="memory-session",
+    )
+    write_subagent_session(
+        session_root / "2026/07/17/benchmark.jsonl",
+        parent_thread_id="root-thread",
+        role="benchmark_adversary",
+        model="gpt-5.6-luna",
+        session_id="benchmark-session",
+        completed=False,
+    )
+    write_subagent_session(
+        session_root / "2026/07/17/claim.jsonl",
+        parent_thread_id="root-thread",
+        role="claim_auditor",
+        model="gpt-5.6-luna",
+        session_id="claim-session",
+        spawn_parent_thread_id="different-parent",
+    )
+    write_subagent_session(
+        session_root / "2026/07/17/repro.jsonl",
+        parent_thread_id="root-thread",
+        role="reproducibility_auditor",
+        model="gpt-5.6-luna",
+        session_id="repro-session",
+        trailing_event=True,
     )
 
     evidence = runner.subagent_role_evidence(
-        event_dir,
-        {"research_scout": "gpt-5.6-terra", "memory_redteam": "gpt-5.6-sol"},
+        session_root,
+        previous_paths,
+        "root-thread",
+        {
+            "research_scout": "gpt-5.6-luna",
+            "memory_redteam": "gpt-5.6-luna",
+            "benchmark_adversary": "gpt-5.6-luna",
+            "claim_auditor": "gpt-5.6-luna",
+            "reproducibility_auditor": "gpt-5.6-luna",
+        },
     )
 
     assert evidence["research_scout"]["passed"] is True
+    assert evidence["research_scout"]["completed_session_ids"] == [
+        "research-session"
+    ]
     assert evidence["memory_redteam"]["passed"] is False
+    assert evidence["memory_redteam"]["observed_models"] == ["gpt-5.6-sol"]
+    assert evidence["memory_redteam"]["completed_session_ids"] == ["memory-session"]
+    assert evidence["benchmark_adversary"]["passed"] is False
+    assert evidence["benchmark_adversary"]["incomplete_session_ids"] == [
+        "benchmark-session"
+    ]
+    assert evidence["claim_auditor"]["passed"] is False
+    assert evidence["claim_auditor"]["completed_session_ids"] == []
+    assert evidence["reproducibility_auditor"]["passed"] is False
+    assert evidence["reproducibility_auditor"]["incomplete_session_ids"] == [
+        "repro-session"
+    ]
+
+
+def test_session_snapshot_skips_junction_directories(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    session_root = tmp_path / "sessions"
+    junction = session_root / "junction"
+    write_subagent_session(
+        junction / "escaped.jsonl",
+        parent_thread_id="root-thread",
+        role="research_scout",
+        model="gpt-5.6-luna",
+        session_id="escaped-session",
+    )
+    real_isjunction = getattr(runner.os.path, "isjunction", lambda _: False)
+    monkeypatch.setattr(
+        runner.os.path,
+        "isjunction",
+        lambda path: Path(path) == junction or real_isjunction(path),
+        raising=False,
+    )
+
+    paths = runner.snapshot_codex_session_files(session_root)
+
+    assert paths == frozenset()
+
+
+def test_session_metadata_scan_is_bounded(monkeypatch, tmp_path: Path) -> None:
+    runner = load_runner()
+    session_root = tmp_path / "sessions"
+    for index in range(2):
+        write_subagent_session(
+            session_root / f"session-{index}.jsonl",
+            parent_thread_id="root-thread",
+            role="research_scout",
+            model="gpt-5.6-luna",
+            session_id=f"session-{index}",
+        )
+    monkeypatch.setattr(runner, "MAX_CODEX_SESSION_FILES", 1)
+
+    with pytest.raises(runner.PipelineError, match="file-count limit"):
+        runner.snapshot_codex_session_files(session_root)
+
+    monkeypatch.setattr(runner, "MAX_CODEX_SESSION_FILES", 100)
+    monkeypatch.setattr(runner, "MAX_CODEX_SESSION_BYTES", 1)
+    with pytest.raises(runner.PipelineError, match="size limit"):
+        runner.subagent_role_evidence(
+            session_root,
+            frozenset(),
+            "root-thread",
+            {"research_scout": "gpt-5.6-luna"},
+        )
+
+
+def test_codex_thread_id_comes_from_the_cli_jsonl_envelope() -> None:
+    runner = load_runner()
+
+    thread_id = runner.codex_thread_id(
+        '{"type":"thread.started","thread_id":"root-thread"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"not trusted as a thread id"}}\n'
+    )
+
+    assert thread_id == "root-thread"
+    with pytest.raises(runner.PipelineError, match="thread.started"):
+        runner.codex_thread_id('{"type":"turn.completed"}\n')
 
 
 def test_subagent_hook_records_only_minimal_lifecycle_fields(tmp_path: Path) -> None:
@@ -942,10 +1128,8 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
     worktree_root = tmp_path / "worktrees"
     (root / "results").mkdir(parents=True)
     (root / "autonomy" / "state").mkdir(parents=True)
-    (root / "scripts" / "autonomy").mkdir(parents=True)
-    (root / "scripts" / "autonomy" / "record_subagent_event.py").write_text(
-        "# trusted test hook\n", encoding="utf-8"
-    )
+    session_root = tmp_path / "codex-home" / "sessions"
+    session_root.mkdir(parents=True)
     (root / "results" / "fabric_benchmark.json").write_text(
         (ROOT / "results" / "fabric_benchmark.json").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -973,16 +1157,12 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
             (worktree / ".codex/config.toml").write_text(
                 'model = "gpt-5.6-sol"\n', encoding="utf-8"
             )
-            for role in sorted(runner.REQUIRED_RESEARCH_ROLES):
-                model = (
-                    "gpt-5.6-terra"
-                    if role in {"research_scout", "reproducibility_auditor"}
-                    else "gpt-5.6-sol"
-                )
+            for role in sorted({*runner.REQUIRED_RESEARCH_ROLES, "default"}):
                 (profile_dir / f"{role}.toml").write_text(
                     f'name = "{role}"\n'
                     f'description = "{role} profile"\n'
-                    f'model = "{model}"\n',
+                    'model = "gpt-5.6-luna"\n'
+                    'developer_instructions = "bounded role"\n',
                     encoding="utf-8",
                 )
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -1018,33 +1198,24 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
                 ),
                 encoding="utf-8",
             )
-            event_roots = list(
-                (root / "autonomy/state/subagent-events").iterdir()
-            )
-            assert len(event_roots) == 1
-            event_dir = event_roots[0]
             for index, role in enumerate(sorted(runner.REQUIRED_RESEARCH_ROLES)):
-                model = (
-                    "gpt-5.6-terra"
-                    if role in {"research_scout", "reproducibility_auditor"}
-                    else "gpt-5.6-sol"
+                write_subagent_session(
+                    session_root / f"session-{index}.jsonl",
+                    parent_thread_id="root-thread",
+                    role=role,
+                    model="gpt-5.6-luna",
+                    session_id=f"agent-{index}",
                 )
-                for event in ("SubagentStart", "SubagentStop"):
-                    (event_dir / f"{event}-agent-{index}.json").write_text(
-                        json.dumps(
-                            {
-                                "hook_event_name": event,
-                                "agent_id": f"agent-{index}",
-                                "agent_type": role,
-                                "model": model,
-                            }
-                        ),
-                        encoding="utf-8",
-                    )
-            return subprocess.CompletedProcess(command, 0, '{"type":"done"}\n', "")
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                '{"type":"thread.started","thread_id":"root-thread"}\n',
+                "",
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(runner, "run", fake_run)
+    monkeypatch.setattr(runner, "codex_session_root", lambda _: session_root)
     monkeypatch.setattr(runner, "git_output", lambda args, cwd: "abc123")
     monkeypatch.setattr(
         runner,
