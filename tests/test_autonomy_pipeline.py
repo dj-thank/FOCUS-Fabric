@@ -638,6 +638,14 @@ def test_gate_environment_drops_unrelated_host_secrets(monkeypatch) -> None:
 
 def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None:
     runner = load_runner()
+    # The trusted outer gate deliberately runs a linked candidate worktree with
+    # the root checkout's interpreter.  Make this preflight unit test assert its
+    # own venv premise instead of inheriting whichever checkout pytest uses.
+    monkeypatch.setattr(
+        runner.sys,
+        "executable",
+        str(runner.ROOT / ".venv" / "Scripts" / "python.exe"),
+    )
     runtime = runner.CodexRuntime(ROOT / "fake-codex.exe", "codex-cli 0.144.2")
     hypothesis = runner.Hypothesis(
         identifier="H001-forward-influence-routing",
