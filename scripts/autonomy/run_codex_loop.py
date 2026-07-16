@@ -394,6 +394,8 @@ def probe_codex_workspace_write(
         label="sandbox state directory",
     )
     state_root.mkdir(parents=True, exist_ok=True)
+    # Re-resolve after creation so a raced junction replacement cannot move
+    # the probe or its cleanup outside the repository boundary.
     state_root = resolved_repository_child(
         root,
         state_path,
