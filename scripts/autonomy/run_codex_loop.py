@@ -30,6 +30,12 @@ DEFAULT_WORKTREE_ROOT = ROOT.parent / ".focus-fabric-worktrees"
 SUPPORTED_EVALUATORS = {"fabric_benchmark_v1"}
 MAX_CODEX_SESSION_FILES = 100_000
 MAX_CODEX_SESSION_BYTES = 16 * 1024 * 1024
+TRUSTED_CHECKPOINT_RELATIVE_PATH = Path(
+    "checkpoints/focus-native-small/model.safetensors"
+)
+TRUSTED_CHECKPOINT_SHA256 = (
+    "348e4d7699060add3a155b961e2998bcbf5ff071b14272ce8699e21507a0631a"
+)
 REQUIRED_RESEARCH_ROLES = {
     "research_scout",
     "memory_redteam",
@@ -80,6 +86,39 @@ def assert_file_sha256(path: Path, expected_sha256: str, label: str) -> None:
         raise CandidateIntegrityError(
             f"{label} changed: expected {expected_sha256}, observed {actual}"
         )
+
+
+def trusted_checkpoint_path(root: Path) -> Path:
+    """Resolve the fixed checkpoint path without accepting link escapes."""
+
+    resolved_root = root.resolve()
+    current = root
+    is_junction = getattr(os.path, "isjunction", lambda _: False)
+    for part in TRUSTED_CHECKPOINT_RELATIVE_PATH.parts:
+        current = current / part
+        if current.is_symlink() or is_junction(current):
+            raise PipelineError(
+                f"trusted checkpoint path must not contain links or junctions: {current}"
+            )
+    checkpoint = current.resolve(strict=False)
+    if not checkpoint.is_relative_to(resolved_root):
+        raise PipelineError(f"trusted checkpoint resolves outside repository: {checkpoint}")
+    return checkpoint
+
+
+def trusted_checkpoint_file(root: Path) -> Path:
+    """Return the authorized local checkpoint only when its bytes are exact."""
+
+    checkpoint = trusted_checkpoint_path(root)
+    if not checkpoint.is_file():
+        raise PipelineError(f"trusted checkpoint is missing: {checkpoint}")
+    observed = sha256_file(checkpoint)
+    if observed != TRUSTED_CHECKPOINT_SHA256:
+        raise PipelineError(
+            "trusted checkpoint digest mismatch: "
+            f"expected {TRUSTED_CHECKPOINT_SHA256}, observed {observed}"
+        )
+    return checkpoint
 
 
 def exact_nonnegative_integer(value: Any, label: str) -> int:
@@ -186,6 +225,7 @@ class RootSnapshot:
     status: str
     tracked_tree_sha256: str
     baseline_sha256: str
+    checkpoint_sha256: str
 
 
 def codex_candidates(requested: str) -> list[Path]:
@@ -287,6 +327,7 @@ def build_codex_exec_command(
         "PYTHONPATH",
         "VIRTUAL_ENV",
         "FOCUS_PYTHON",
+        "FOCUS_CHECKPOINT",
         "PYTHONNOUSERSITE",
         "PYTHONDONTWRITEBYTECODE",
         "PIP_NO_INDEX",
@@ -378,6 +419,7 @@ def probe_codex_workspace_write(
     environment: dict[str, str],
     platform_name: str = os.name,
     python_executable: Path | None = None,
+    checkpoint_file: Path | None = None,
 ) -> tuple[bool, str]:
     """Prove the native sandbox can run project deps and write its workspace."""
 
@@ -410,6 +452,17 @@ def probe_codex_workspace_write(
         return False, f"project runtime is missing: {runtime_python}"
     probe_root.mkdir(parents=False, exist_ok=False)
     sentinel = probe_root / "workspace-write.ok"
+    checkpoint_probe = ""
+    if checkpoint_file is not None:
+        checkpoint_probe = (
+            "checkpoint=Path("
+            + json.dumps(str(checkpoint_file.resolve()))
+            + "); "
+            + "observed=hashlib.sha256(checkpoint.read_bytes()).hexdigest(); "
+            + "assert observed=="
+            + json.dumps(TRUSTED_CHECKPOINT_SHA256)
+            + ", observed; "
+        )
     command = [
         str(runtime.path),
         "sandbox",
@@ -421,8 +474,9 @@ def probe_codex_workspace_write(
         str(runtime_python),
         "-c",
         (
-            "from pathlib import Path; import pytest, torch; "
-            "Path('workspace-write.ok').write_text('ok', encoding='ascii')"
+            "from pathlib import Path; import hashlib, pytest, torch; "
+            + checkpoint_probe
+            + "Path('workspace-write.ok').write_text('ok', encoding='ascii')"
         ),
     ]
     try:
@@ -441,7 +495,10 @@ def probe_codex_workspace_write(
             return False, "native sandbox did not create the workspace-write sentinel"
         if sentinel.read_text(encoding="ascii") != "ok":
             return False, "native sandbox created an invalid workspace-write sentinel"
-        return True, "project runtime and workspace-write sentinel verified"
+        detail = "project runtime and workspace-write sentinel verified"
+        if checkpoint_file is not None:
+            detail += "; trusted checkpoint readable"
+        return True, detail
     finally:
         if os.path.lexists(probe_root):
             cleanup_root = resolved_repository_child(
@@ -539,7 +596,12 @@ def codex_cli_environment() -> dict[str, str]:
     return environment
 
 
-def candidate_codex_environment(root: Path, worktree: Path) -> dict[str, str]:
+def candidate_codex_environment(
+    root: Path,
+    worktree: Path,
+    *,
+    checkpoint_file: Path | None = None,
+) -> dict[str, str]:
     """Pin inner Codex tools to the project venv and candidate source tree."""
 
     resolved_root = root.resolve()
@@ -554,6 +616,11 @@ def candidate_codex_environment(root: Path, worktree: Path) -> dict[str, str]:
             f"candidate runtime must use the project venv: {runtime_python}"
         )
     scripts_directory = runtime_python.parent
+    checkpoint = trusted_checkpoint_path(resolved_root)
+    if checkpoint_file is not None and checkpoint_file.resolve() != checkpoint:
+        raise PipelineError(
+            "candidate runtime checkpoint differs from the trusted repository path"
+        )
     environment = codex_cli_environment()
     inherited_path = environment.get("PATH", "")
     environment.update(
@@ -563,6 +630,7 @@ def candidate_codex_environment(root: Path, worktree: Path) -> dict[str, str]:
             ),
             "VIRTUAL_ENV": str(resolved_venv),
             "FOCUS_PYTHON": str(runtime_python),
+            "FOCUS_CHECKPOINT": str(checkpoint.parent),
             "PYTHONPATH": str((worktree / "src").resolve()),
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -707,11 +775,19 @@ def tracked_tree_sha256(root: Path) -> str:
 
 def capture_root_snapshot(root: Path) -> RootSnapshot:
     baseline = root / "results/fabric_benchmark.json"
+    try:
+        checkpoint = trusted_checkpoint_path(root)
+        checkpoint_sha256 = (
+            sha256_file(checkpoint) if checkpoint.is_file() else "MISSING"
+        )
+    except (OSError, PipelineError) as error:
+        raise RootIntegrityError(f"trusted checkpoint path is invalid: {error}") from error
     return RootSnapshot(
         head=git_output(["rev-parse", "HEAD"], root),
         status=git_output(["status", "--porcelain"], root),
         tracked_tree_sha256=tracked_tree_sha256(root),
         baseline_sha256=sha256_file(baseline),
+        checkpoint_sha256=checkpoint_sha256,
     )
 
 
@@ -719,7 +795,13 @@ def assert_root_unchanged(root: Path, snapshot: RootSnapshot) -> None:
     current = capture_root_snapshot(root)
     differences = [
         field
-        for field in ("head", "status", "tracked_tree_sha256", "baseline_sha256")
+        for field in (
+            "head",
+            "status",
+            "tracked_tree_sha256",
+            "baseline_sha256",
+            "checkpoint_sha256",
+        )
         if getattr(current, field) != getattr(snapshot, field)
     ]
     if differences:
@@ -897,6 +979,29 @@ def preflight_report(
         if (root / "results/fabric_benchmark.json").is_file()
         else None
     )
+    checkpoint_error: str | None = None
+    try:
+        checkpoint_path = trusted_checkpoint_path(root)
+        checkpoint_observed_sha256 = (
+            sha256_file(checkpoint_path) if checkpoint_path.is_file() else None
+        )
+    except (OSError, PipelineError) as error:
+        checkpoint_path = root / TRUSTED_CHECKPOINT_RELATIVE_PATH
+        checkpoint_observed_sha256 = None
+        checkpoint_error = f"unreadable ({error})"
+    checkpoint_ready = checkpoint_observed_sha256 == TRUSTED_CHECKPOINT_SHA256
+    if not checkpoint_ready:
+        checkpoint_detail = (
+            checkpoint_error
+            or (
+                "missing"
+                if checkpoint_observed_sha256 is None
+                else f"digest {checkpoint_observed_sha256}"
+            )
+        )
+        blockers.append(
+            "authorized local checkpoint unavailable or invalid: " + checkpoint_detail
+        )
 
     unsupported = [
         item.identifier for item in hypotheses if item.evaluator not in SUPPORTED_EVALUATORS
@@ -1019,6 +1124,7 @@ def preflight_report(
             runtime,
             root,
             environment=codex_environment,
+            checkpoint_file=(checkpoint_path if checkpoint_ready else None),
         )
         if not workspace_write_ready:
             blockers.append(
@@ -1043,6 +1149,7 @@ def preflight_report(
         and root_clean
         and logged_in
         and workspace_write_ready
+        and checkpoint_ready
         and session_metadata_ready
         and not unsupported
     )
@@ -1057,6 +1164,12 @@ def preflight_report(
         "git_repository": git_repository,
         "root_clean": root_clean,
         "baseline_sha256": baseline_sha256,
+        "trusted_checkpoint": {
+            "path": TRUSTED_CHECKPOINT_RELATIVE_PATH.as_posix(),
+            "expected_sha256": TRUSTED_CHECKPOINT_SHA256,
+            "observed_sha256": checkpoint_observed_sha256,
+            "ready": checkpoint_ready,
+        },
         "codex": (
             {"path": str(runtime.path), "version": runtime.version}
             if runtime is not None
@@ -1096,6 +1209,11 @@ def experiment_contract_for(
         "schema_version": 1,
         "hypothesis_id": hypothesis.identifier,
         "baseline_sha256": baseline_digest,
+        "trusted_local_checkpoint": {
+            "path": TRUSTED_CHECKPOINT_RELATIVE_PATH.as_posix(),
+            "sha256": TRUSTED_CHECKPOINT_SHA256,
+            "redistribution": "prohibited; authorized local evaluation input only",
+        },
         "independent_variable": hypothesis.rationale,
         "controls": list(hypothesis.controls),
         "split_discipline": (
@@ -1175,8 +1293,12 @@ Requirements:
    - `python -m pytest -q`
    - `python scripts/autonomy/validate_claims.py`
    - `python scripts/autonomy/detect_drift.py`
-   Generate the candidate benchmark with
-   `python scripts/benchmark_fabric.py --threads 1 --output results/candidate_benchmark.json`.
+   `FOCUS_CHECKPOINT` names the hash-verified, authorized local checkpoint
+   directory outside this Git worktree. Read it in place; never copy, modify,
+   redistribute, or add it to Git. Generate the candidate benchmark in
+   PowerShell with
+   `python scripts/benchmark_fabric.py --threads 1 --checkpoint "$env:FOCUS_CHECKPOINT" --output results/candidate_benchmark.json`
+   (on POSIX, use `"$FOCUS_CHECKPOINT"`).
    Do not weaken gates or edit baseline results.
 5. Finish with structured JSON matching the supplied schema. Include failures,
    risks, negative results, and exact evidence paths. `changed_files` must list
@@ -1382,6 +1504,7 @@ def run_gates(
     root_snapshot: RootSnapshot | None = None,
     contract_path: Path | None = None,
     contract_sha256: str | None = None,
+    checkpoint_file: Path | None = None,
 ) -> list[dict[str, Any]]:
     gate_config = json.loads(
         (trusted_root / "autonomy/gates.json").read_text(encoding="utf-8")
@@ -1395,6 +1518,15 @@ def run_gates(
         requested_command = [str(item) for item in gate["command"]]
         command = pinned_python_command(requested_command)
         if gate["name"] == "cpu-evidence":
+            verified_checkpoint = trusted_checkpoint_file(trusted_root)
+            if (
+                checkpoint_file is None
+                or checkpoint_file.resolve() != verified_checkpoint
+            ):
+                raise PipelineError(
+                    "cpu-evidence gate requires the verified trusted checkpoint"
+                )
+            command.extend(["--checkpoint", str(verified_checkpoint.parent)])
             for suffix in ("json", "csv", "png"):
                 (worktree / f"results/candidate_benchmark.{suffix}").unlink(
                     missing_ok=True
@@ -2135,6 +2267,7 @@ def execute_one(
     host_codex_environment = codex_cli_environment()
     session_root = codex_session_root(host_codex_environment)
     previous_session_paths = snapshot_codex_session_files(session_root)
+    checkpoint_file = trusted_checkpoint_file(root)
     baseline = root / "results/fabric_benchmark.json"
     baseline_digest = sha256_file(baseline)
     root_snapshot = capture_root_snapshot(root)
@@ -2144,7 +2277,9 @@ def execute_one(
         ),
         cwd=root,
     )
-    codex_environment = candidate_codex_environment(root, worktree)
+    codex_environment = candidate_codex_environment(
+        root, worktree, checkpoint_file=checkpoint_file
+    )
     start_head = git_output(["rev-parse", "HEAD"], worktree)
     experiment_dir = worktree / "results" / "experiments" / hypothesis.identifier
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -2414,6 +2549,7 @@ def execute_one(
             root_snapshot,
             contract_path,
             contract_sha256,
+            checkpoint_file=checkpoint_file,
         )
         gates_passed = all(report["returncode"] == 0 for report in gate_reports)
         if gates_passed:

@@ -46,6 +46,9 @@ Every Codex session and subagent must follow these rules.
   autonomous worktree, use the injected `python`/`FOCUS_PYTHON` equivalents
   supplied by the root prompt when GNU Make is unavailable; never install,
   uninstall, or mutate the shared project runtime.
+- Treat `FOCUS_CHECKPOINT` as a read-only authorized local input.  Verify its
+  preregistered digest in the outer runner; never copy it into a worktree,
+  commit it, redistribute it, or alter it from candidate code.
 - Put raw measurements under `results/`; do not hand-edit generated metrics.
 - Update `docs/CLAIMS_LEDGER.json` only through
   `scripts/autonomy/validate_claims.py --refresh-digests`.

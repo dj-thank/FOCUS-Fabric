@@ -11,4 +11,6 @@ The configuration, metadata, validation summaries, loader implementation, and de
 
 Place an authorized copy at the corresponding path to enable the two optional checkpoint-specific integration tests. All source-only algebraic, controller, training, semantic-memory, monitoring, and trace-capture tests run without these binaries.
 
+The H001 autonomous evaluator also uses `focus-native-small` as a read-only local input. Its preflight and experiment contract require the exact SHA-256 above, pass the directory to candidate and trusted benchmark processes explicitly, and do not copy the binary into isolated Git worktrees or public evidence.
+
 Do not upload replacement weights without documenting model origin, training-data governance, license compatibility, tokenizer revision, and cryptographic hashes.

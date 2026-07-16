@@ -147,6 +147,7 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
         "PYTHONPATH": str(tmp_path / "candidate" / "src"),
         "VIRTUAL_ENV": str(tmp_path / "venv"),
         "FOCUS_PYTHON": str(tmp_path / "venv" / "Scripts" / "python.exe"),
+        "FOCUS_CHECKPOINT": str(tmp_path / "checkpoint"),
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PIP_NO_INDEX": "1",
@@ -178,6 +179,7 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
         item for item in command if item.startswith("shell_environment_policy.set=")
     )
     assert "FOCUS_PYTHON=" in shell_override
+    assert "FOCUS_CHECKPOINT=" in shell_override
     assert "PYTHONPATH=" in shell_override
     assert "PIP_NO_INDEX=" in shell_override
     assert "OPENAI_API_KEY" not in shell_override
@@ -222,7 +224,7 @@ def test_windows_workspace_write_probe_requires_a_real_sentinel(
     assert "sentinel" in detail
     assert calls and 'windows.sandbox="elevated"' in calls[0]
     assert str(Path(sys.executable).resolve()) in calls[0]
-    assert any("import pytest, torch" in item for item in calls[0])
+    assert any("import hashlib, pytest, torch" in item for item in calls[0])
 
 
 def test_windows_workspace_write_probe_accepts_a_sandbox_created_sentinel(
@@ -302,6 +304,59 @@ def test_gate_commands_are_pinned_to_current_python(monkeypatch, tmp_path: Path)
     assert Path(calls[0][1]["environment"]["MPLCONFIGDIR"]) == (
         tmp_path / "autonomy/state/matplotlib"
     )
+
+
+def test_cpu_evidence_gate_uses_verified_root_checkpoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    trusted_root = tmp_path / "root"
+    worktree = tmp_path / "candidate"
+    (trusted_root / "autonomy").mkdir(parents=True)
+    (worktree / "src").mkdir(parents=True)
+    (trusted_root / "autonomy/gates.json").write_text(
+        json.dumps(
+            {
+                "commands": [
+                    {
+                        "name": "cpu-evidence",
+                        "command": [
+                            "python",
+                            "scripts/benchmark_fabric.py",
+                            "--output",
+                            "results/candidate_benchmark.json",
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = trusted_root / "checkpoints/focus-native-small/model.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"trusted-checkpoint")
+    monkeypatch.setattr(
+        runner, "TRUSTED_CHECKPOINT_SHA256", runner.sha256_file(checkpoint)
+    )
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    ledger = runner.EventLedger(trusted_root / "autonomy/state/events.jsonl")
+
+    reports = runner.run_gates(
+        worktree,
+        ledger,
+        trusted_root,
+        checkpoint_file=checkpoint,
+    )
+
+    assert reports[0]["returncode"] == 0
+    assert calls[0][0][-2:] == ["--checkpoint", str(checkpoint.parent.resolve())]
+    assert calls[0][1]["environment"]["PYTHONPATH"] == str(worktree / "src")
 
 
 def test_gate_rejects_any_preregistered_contract_byte_change(
@@ -667,15 +722,21 @@ def test_candidate_codex_environment_pins_root_venv_and_candidate_source(
     python.parent.mkdir(parents=True)
     python.touch()
     (worktree / "src").mkdir(parents=True)
+    checkpoint = root / "checkpoints/focus-native-small/model.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.touch()
     monkeypatch.setattr(runner.sys, "executable", str(python))
     monkeypatch.setenv("PATH", str(tmp_path / "system-bin"))
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
 
-    environment = runner.candidate_codex_environment(root, worktree)
+    environment = runner.candidate_codex_environment(
+        root, worktree, checkpoint_file=checkpoint
+    )
 
     assert environment["PATH"].split(os.pathsep)[0] == str(scripts.resolve())
     assert environment["VIRTUAL_ENV"] == str((root / ".venv").resolve())
     assert environment["FOCUS_PYTHON"] == str(python.resolve())
+    assert environment["FOCUS_CHECKPOINT"] == str(checkpoint.parent.resolve())
     assert environment["PYTHONPATH"] == str((worktree / "src").resolve())
     assert environment["PYTHONNOUSERSITE"] == "1"
     assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
@@ -699,6 +760,39 @@ def test_candidate_codex_environment_rejects_non_project_python(
         runner.candidate_codex_environment(root, worktree)
 
 
+def test_trusted_checkpoint_fails_closed_on_missing_or_wrong_bytes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    checkpoint = tmp_path / runner.TRUSTED_CHECKPOINT_RELATIVE_PATH
+
+    with pytest.raises(runner.PipelineError, match="checkpoint is missing"):
+        runner.trusted_checkpoint_file(tmp_path)
+
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"authorized-local-checkpoint")
+    monkeypatch.setattr(
+        runner,
+        "TRUSTED_CHECKPOINT_SHA256",
+        runner.sha256_file(checkpoint),
+    )
+    assert runner.trusted_checkpoint_file(tmp_path) == checkpoint.resolve()
+
+    real_isjunction = getattr(runner.os.path, "isjunction", lambda _: False)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            runner.os.path,
+            "isjunction",
+            lambda path: Path(path) == checkpoint.parent or real_isjunction(path),
+        )
+        with pytest.raises(runner.PipelineError, match="links or junctions"):
+            runner.trusted_checkpoint_file(tmp_path)
+
+    checkpoint.write_bytes(b"tampered")
+    with pytest.raises(runner.PipelineError, match="digest mismatch"):
+        runner.trusted_checkpoint_file(tmp_path)
+
+
 def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None:
     runner = load_runner()
     # The trusted outer gate deliberately runs a linked candidate worktree with
@@ -708,6 +802,21 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
         runner.sys,
         "executable",
         str(runner.ROOT / ".venv" / "Scripts" / "python.exe"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "candidate_codex_environment",
+        lambda *args, **kwargs: {
+            "PATH": "test-runtime",
+            "PYTHONPATH": "test-candidate-src",
+            "VIRTUAL_ENV": "test-venv",
+            "FOCUS_PYTHON": "test-python",
+            "FOCUS_CHECKPOINT": "test-checkpoint",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_NO_INDEX": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        },
     )
     runtime = runner.CodexRuntime(ROOT / "fake-codex.exe", "codex-cli 0.144.2")
     hypothesis = runner.Hypothesis(
@@ -838,11 +947,21 @@ def test_root_integrity_guard_fails_when_tracked_snapshot_changes(
     monkeypatch, tmp_path: Path
 ) -> None:
     runner = load_runner()
-    original = runner.RootSnapshot("head", "", "tree-a", "baseline")
-    changed = runner.RootSnapshot("head", "", "tree-b", "baseline")
+    original = runner.RootSnapshot("head", "", "tree-a", "baseline", "checkpoint")
+    changed = runner.RootSnapshot("head", "", "tree-b", "baseline", "checkpoint")
     monkeypatch.setattr(runner, "capture_root_snapshot", lambda root: changed)
 
     with pytest.raises(runner.RootIntegrityError, match="tracked_tree_sha256"):
+        with runner.root_integrity_guard(tmp_path, original):
+            pass
+
+    checkpoint_changed = runner.RootSnapshot(
+        "head", "", "tree-a", "baseline", "tampered-checkpoint"
+    )
+    monkeypatch.setattr(
+        runner, "capture_root_snapshot", lambda root: checkpoint_changed
+    )
+    with pytest.raises(runner.RootIntegrityError, match="checkpoint_sha256"):
         with runner.root_integrity_guard(tmp_path, original):
             pass
 
@@ -1205,6 +1324,12 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
     runtime_python.parent.mkdir(parents=True)
     runtime_python.touch()
     monkeypatch.setattr(runner.sys, "executable", str(runtime_python))
+    checkpoint = root / "checkpoints/focus-native-small/model.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"test-checkpoint")
+    monkeypatch.setattr(
+        runner, "trusted_checkpoint_file", lambda _: checkpoint.resolve()
+    )
     session_root = tmp_path / "codex-home" / "sessions"
     session_root.mkdir(parents=True)
     (root / "results" / "fabric_benchmark.json").write_text(
