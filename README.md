@@ -222,7 +222,7 @@ make autonomy-dry-run
 .\scripts\autonomy\run_cycle.cmd --mode execute --hypothesis H001-forward-influence-routing
 ```
 
-既定のexecuteはcandidateをcommitもmergeもしません。automatic promotionは`--auto-promote`を明示した場合だけ有効になり、それでもtests、claim integrity、post-hoc randomized holdout、exactness constraints、H001のprimary-metric contractをすべて通る必要があります。詳しい安全境界は[Codex autonomous operation](docs/CODEX_AUTONOMY.md)を参照してください。
+既定のexecuteはcandidateをcommitもmergeもしません。inner Codexの既定Pythonをproject venvに、`PYTHONPATH`をcandidate側`src`に固定し、偶発的なglobal Python fallbackやroot実装の誤importをpreflightで防ぎます。明示的な別Python起動は技術的に不可能なのではなく規約違反です。automatic promotionは`--auto-promote`を明示した場合だけ有効になり、それでもtests、claim integrity、post-hoc randomized holdout、exactness constraints、H001のprimary-metric contractをすべて通る必要があります。詳しい安全境界は[Codex autonomous operation](docs/CODEX_AUTONOMY.md)を参照してください。
 
 ## 現在の限界
 

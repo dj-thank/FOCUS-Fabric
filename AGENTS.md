@@ -42,7 +42,10 @@ Every Codex session and subagent must follow these rules.
   `.codex/agents/<role>.toml` contract.  Task names and nicknames are not model
   evidence; only host runtime metadata may satisfy the routing gate.
 - Add or update tests before claiming a mechanism works.
-- Run `make gate` before returning a completion result.
+- Run `make gate` before returning a completion result.  In the Windows
+  autonomous worktree, use the injected `python`/`FOCUS_PYTHON` equivalents
+  supplied by the root prompt when GNU Make is unavailable; never install,
+  uninstall, or mutate the shared project runtime.
 - Put raw measurements under `results/`; do not hand-edit generated metrics.
 - Update `docs/CLAIMS_LEDGER.json` only through
   `scripts/autonomy/validate_claims.py --refresh-digests`.

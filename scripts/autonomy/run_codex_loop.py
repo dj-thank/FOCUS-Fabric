@@ -276,8 +276,30 @@ def build_codex_exec_command(
     schema_path: Path,
     result_path: Path,
     project_root: Path = ROOT,
+    shell_environment: dict[str, str] | None = None,
 ) -> list[str]:
     """Build a noninteractive command using options accepted by current Codex."""
+
+    if shell_environment is None:
+        shell_environment = candidate_codex_environment(ROOT, project_root)
+    shell_keys = (
+        "PATH",
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+        "FOCUS_PYTHON",
+        "PYTHONNOUSERSITE",
+        "PYTHONDONTWRITEBYTECODE",
+        "PIP_NO_INDEX",
+        "PIP_DISABLE_PIP_VERSION_CHECK",
+    )
+    missing_shell_keys = [key for key in shell_keys if key not in shell_environment]
+    if missing_shell_keys:
+        raise PipelineError(
+            "candidate shell environment is incomplete: " + ", ".join(missing_shell_keys)
+        )
+    shell_table = ",".join(
+        f"{key}={json.dumps(shell_environment[key])}" for key in shell_keys
+    )
 
     command = [
         str(runtime.path),
@@ -307,6 +329,8 @@ def build_codex_exec_command(
         "allow_login_shell=false",
         "-c",
         'shell_environment_policy.inherit="core"',
+        "-c",
+        f"shell_environment_policy.set={{{shell_table}}}",
         "--json",
         "--color",
         "never",
@@ -353,8 +377,9 @@ def probe_codex_workspace_write(
     *,
     environment: dict[str, str],
     platform_name: str = os.name,
+    python_executable: Path | None = None,
 ) -> tuple[bool, str]:
-    """Prove the native Windows sandbox can create a workspace sentinel."""
+    """Prove the native sandbox can run project deps and write its workspace."""
 
     if platform_name != "nt":
         return True, "native Windows workspace-write probe not required"
@@ -380,6 +405,9 @@ def probe_codex_workspace_write(
     )
     if not probe_root.is_relative_to(state_root):
         raise PipelineError(f"sandbox probe directory escaped state root: {probe_root}")
+    runtime_python = Path(python_executable or sys.executable).resolve()
+    if not runtime_python.is_file():
+        return False, f"project runtime is missing: {runtime_python}"
     probe_root.mkdir(parents=False, exist_ok=False)
     sentinel = probe_root / "workspace-write.ok"
     command = [
@@ -390,13 +418,11 @@ def probe_codex_workspace_write(
         ":workspace",
         "-C",
         str(probe_root),
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
+        str(runtime_python),
+        "-c",
         (
-            "Set-Content -LiteralPath (Join-Path (Get-Location) "
-            "'workspace-write.ok') -Value 'ok' -NoNewline -Encoding ascii"
+            "from pathlib import Path; import pytest, torch; "
+            "Path('workspace-write.ok').write_text('ok', encoding='ascii')"
         ),
     ]
     try:
@@ -415,7 +441,7 @@ def probe_codex_workspace_write(
             return False, "native sandbox did not create the workspace-write sentinel"
         if sentinel.read_text(encoding="ascii") != "ok":
             return False, "native sandbox created an invalid workspace-write sentinel"
-        return True, "workspace-write sentinel created"
+        return True, "project runtime and workspace-write sentinel verified"
     finally:
         if os.path.lexists(probe_root):
             cleanup_root = resolved_repository_child(
@@ -510,6 +536,40 @@ def codex_cli_environment() -> dict[str, str]:
     for key in ("APPDATA", "CODEX_HOME", "HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE"):
         if key in os.environ:
             environment[key] = os.environ[key]
+    return environment
+
+
+def candidate_codex_environment(root: Path, worktree: Path) -> dict[str, str]:
+    """Pin inner Codex tools to the project venv and candidate source tree."""
+
+    resolved_root = root.resolve()
+    resolved_venv = (resolved_root / ".venv").resolve()
+    runtime_python = Path(sys.executable).resolve()
+    try:
+        in_project_venv = runtime_python.is_relative_to(resolved_venv)
+    except ValueError:
+        in_project_venv = False
+    if not in_project_venv or not runtime_python.is_file():
+        raise PipelineError(
+            f"candidate runtime must use the project venv: {runtime_python}"
+        )
+    scripts_directory = runtime_python.parent
+    environment = codex_cli_environment()
+    inherited_path = environment.get("PATH", "")
+    environment.update(
+        {
+            "PATH": os.pathsep.join(
+                item for item in (str(scripts_directory), inherited_path) if item
+            ),
+            "VIRTUAL_ENV": str(resolved_venv),
+            "FOCUS_PYTHON": str(runtime_python),
+            "PYTHONPATH": str((worktree / "src").resolve()),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_NO_INDEX": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        }
+    )
     return environment
 
 
@@ -1106,7 +1166,18 @@ Requirements:
    and candidate result artifacts.
 3. Do not commit, amend, rebase, or otherwise change Git history. The outer
    orchestrator owns history and promotion.
-4. Run `make gate`. Do not weaken gates or edit baseline results.
+4. Use the injected project runtime (`python` on PATH, also named by
+   `FOCUS_PYTHON`) and the candidate source injected through `PYTHONPATH`.
+   Do not run pip, install, uninstall, or otherwise mutate the shared runtime.
+   Run these platform-neutral gate equivalents; `make` is optional and must not
+   be treated as a prerequisite:
+   - `python -m compileall -q src scripts tests`
+   - `python -m pytest -q`
+   - `python scripts/autonomy/validate_claims.py`
+   - `python scripts/autonomy/detect_drift.py`
+   Generate the candidate benchmark with
+   `python scripts/benchmark_fabric.py --threads 1 --output results/candidate_benchmark.json`.
+   Do not weaken gates or edit baseline results.
 5. Finish with structured JSON matching the supplied schema. Include failures,
    risks, negative results, and exact evidence paths. `changed_files` must list
    every agent-created Git-observed changed path exactly, including any candidate
@@ -2061,8 +2132,8 @@ def execute_one(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     branch = f"autonomy/{slug(hypothesis.identifier)}-{timestamp}"
     worktree = worktree_root / f"{slug(hypothesis.identifier)}-{timestamp}"
-    codex_environment = codex_cli_environment()
-    session_root = codex_session_root(codex_environment)
+    host_codex_environment = codex_cli_environment()
+    session_root = codex_session_root(host_codex_environment)
     previous_session_paths = snapshot_codex_session_files(session_root)
     baseline = root / "results/fabric_benchmark.json"
     baseline_digest = sha256_file(baseline)
@@ -2073,6 +2144,7 @@ def execute_one(
         ),
         cwd=root,
     )
+    codex_environment = candidate_codex_environment(root, worktree)
     start_head = git_output(["rev-parse", "HEAD"], worktree)
     experiment_dir = worktree / "results" / "experiments" / hypothesis.identifier
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -2093,6 +2165,7 @@ def execute_one(
         schema_path=worktree / "autonomy/schemas/agent_result.schema.json",
         result_path=result_path.relative_to(worktree),
         project_root=worktree,
+        shell_environment=codex_environment,
     )
     ledger.append(
         "experiment_contract.preregistered",

@@ -142,11 +142,22 @@ def test_windows_codex_candidates_prefer_newest_desktop_runtime(
 def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -> None:
     runner = load_runner()
     runtime = runner.CodexRuntime(tmp_path / "codex.exe", "codex-cli 0.144.2")
+    shell_environment = {
+        "PATH": str(tmp_path / "venv" / "Scripts"),
+        "PYTHONPATH": str(tmp_path / "candidate" / "src"),
+        "VIRTUAL_ENV": str(tmp_path / "venv"),
+        "FOCUS_PYTHON": str(tmp_path / "venv" / "Scripts" / "python.exe"),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PIP_NO_INDEX": "1",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    }
 
     command = runner.build_codex_exec_command(
         runtime,
         schema_path=tmp_path / "schema.json",
         result_path=tmp_path / "result.json",
+        shell_environment=shell_environment,
     )
 
     assert command[:4] == [str(runtime.path), "--ask-for-approval", "never", "exec"]
@@ -163,6 +174,13 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
         assert 'windows.sandbox="elevated"' in command
     assert "allow_login_shell=false" in command
     assert 'shell_environment_policy.inherit="core"' in command
+    shell_override = next(
+        item for item in command if item.startswith("shell_environment_policy.set=")
+    )
+    assert "FOCUS_PYTHON=" in shell_override
+    assert "PYTHONPATH=" in shell_override
+    assert "PIP_NO_INDEX=" in shell_override
+    assert "OPENAI_API_KEY" not in shell_override
     enabled = [command[index + 1] for index, item in enumerate(command) if item == "--enable"]
     assert enabled == ["multi_agent"]
     assert "--dangerously-bypass-hook-trust" not in command
@@ -203,6 +221,8 @@ def test_windows_workspace_write_probe_requires_a_real_sentinel(
     assert ready is False
     assert "sentinel" in detail
     assert calls and 'windows.sandbox="elevated"' in calls[0]
+    assert str(Path(sys.executable).resolve()) in calls[0]
+    assert any("import pytest, torch" in item for item in calls[0])
 
 
 def test_windows_workspace_write_probe_accepts_a_sandbox_created_sentinel(
@@ -226,7 +246,7 @@ def test_windows_workspace_write_probe_accepts_a_sandbox_created_sentinel(
     )
 
     assert ready is True
-    assert detail == "workspace-write sentinel created"
+    assert detail == "project runtime and workspace-write sentinel verified"
     state_root = tmp_path / "autonomy" / "state"
     assert list(state_root.glob("preflight-sandbox-*")) == []
 
@@ -634,6 +654,49 @@ def test_gate_environment_drops_unrelated_host_secrets(monkeypatch) -> None:
     codex_environment = runner.codex_cli_environment()
     assert codex_environment["USERPROFILE"] == r"C:\\Users\\rambo"
     assert "OPENAI_API_KEY" not in codex_environment
+
+
+def test_candidate_codex_environment_pins_root_venv_and_candidate_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    root = tmp_path / "root"
+    worktree = tmp_path / "candidate"
+    scripts = root / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    python = scripts / ("python.exe" if os.name == "nt" else "python")
+    python.parent.mkdir(parents=True)
+    python.touch()
+    (worktree / "src").mkdir(parents=True)
+    monkeypatch.setattr(runner.sys, "executable", str(python))
+    monkeypatch.setenv("PATH", str(tmp_path / "system-bin"))
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+
+    environment = runner.candidate_codex_environment(root, worktree)
+
+    assert environment["PATH"].split(os.pathsep)[0] == str(scripts.resolve())
+    assert environment["VIRTUAL_ENV"] == str((root / ".venv").resolve())
+    assert environment["FOCUS_PYTHON"] == str(python.resolve())
+    assert environment["PYTHONPATH"] == str((worktree / "src").resolve())
+    assert environment["PYTHONNOUSERSITE"] == "1"
+    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert environment["PIP_NO_INDEX"] == "1"
+    assert environment["PIP_DISABLE_PIP_VERSION_CHECK"] == "1"
+    assert "OPENAI_API_KEY" not in environment
+
+
+def test_candidate_codex_environment_rejects_non_project_python(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    root = tmp_path / "root"
+    worktree = tmp_path / "candidate"
+    system_python = tmp_path / "system" / ("python.exe" if os.name == "nt" else "python")
+    system_python.parent.mkdir(parents=True)
+    system_python.touch()
+    monkeypatch.setattr(runner.sys, "executable", str(system_python))
+
+    with pytest.raises(runner.PipelineError, match="project venv"):
+        runner.candidate_codex_environment(root, worktree)
 
 
 def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None:
@@ -1136,6 +1199,12 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
     worktree_root = tmp_path / "worktrees"
     (root / "results").mkdir(parents=True)
     (root / "autonomy" / "state").mkdir(parents=True)
+    runtime_python = root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+        "python.exe" if os.name == "nt" else "python"
+    )
+    runtime_python.parent.mkdir(parents=True)
+    runtime_python.touch()
+    monkeypatch.setattr(runner.sys, "executable", str(runtime_python))
     session_root = tmp_path / "codex-home" / "sessions"
     session_root.mkdir(parents=True)
     (root / "results" / "fabric_benchmark.json").write_text(
