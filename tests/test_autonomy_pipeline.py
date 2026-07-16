@@ -102,6 +102,8 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
         item.startswith("agents.research_scout.config_file=") for item in command
     )
     assert "sandbox_workspace_write.network_access=false" in command
+    if os.name == "nt":
+        assert 'windows.sandbox="elevated"' in command
     assert "allow_login_shell=false" in command
     assert 'shell_environment_policy.inherit="core"' in command
     enabled = [command[index + 1] for index, item in enumerate(command) if item == "--enable"]
@@ -111,6 +113,65 @@ def test_codex_exec_command_uses_current_noninteractive_syntax(tmp_path: Path) -
     assert any(item.startswith("hooks.SubagentStop=") for item in command)
     assert any("--output-dir" in item for item in command)
     assert command[-1] == "-"
+
+
+def test_native_sandbox_overrides_are_explicit_on_windows() -> None:
+    runner = load_runner()
+
+    assert runner.native_sandbox_overrides("nt") == [
+        "-c",
+        'windows.sandbox="elevated"',
+    ]
+    assert runner.native_sandbox_overrides("posix") == []
+
+
+def test_windows_workspace_write_probe_requires_a_real_sentinel(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    runtime = runner.CodexRuntime(tmp_path / "codex.exe", "codex-cli 0.144.2")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(runner, "run", fake_run)
+
+    ready, detail = runner.probe_codex_workspace_write(
+        runtime,
+        tmp_path,
+        environment={"PATH": ""},
+        platform_name="nt",
+    )
+
+    assert ready is False
+    assert "sentinel" in detail
+    assert calls and 'windows.sandbox="elevated"' in calls[0]
+
+
+def test_windows_workspace_write_probe_accepts_a_sandbox_created_sentinel(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = load_runner()
+    runtime = runner.CodexRuntime(tmp_path / "codex.exe", "codex-cli 0.144.2")
+
+    def fake_run(command, **kwargs):
+        working_root = Path(command[command.index("-C") + 1])
+        (working_root / "workspace-write.ok").write_text("ok", encoding="ascii")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(runner, "run", fake_run)
+
+    ready, detail = runner.probe_codex_workspace_write(
+        runtime,
+        tmp_path,
+        environment={"PATH": ""},
+        platform_name="nt",
+    )
+
+    assert ready is True
+    assert detail == "workspace-write sentinel created"
 
 
 def test_gate_commands_are_pinned_to_current_python(monkeypatch, tmp_path: Path) -> None:
@@ -503,6 +564,11 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
     )
     monkeypatch.setattr(runner, "resolve_codex_runtime", lambda _: runtime)
     monkeypatch.setattr(runner, "git_output", lambda args, cwd: "")
+    monkeypatch.setattr(
+        runner,
+        "probe_codex_workspace_write",
+        lambda *args, **kwargs: (True, "workspace-write sentinel created"),
+    )
 
     def fake_run(command, **kwargs):
         if command[1:3] == ["login", "status"]:
@@ -538,7 +604,23 @@ def test_preflight_fails_closed_when_codex_is_not_logged_in(monkeypatch) -> None
 
     assert report["ready_for_dry_run"] is True
     assert report["ready_for_execute"] is False
+    assert report["workspace_write_ready"] is True
     assert any("logged in" in blocker.lower() for blocker in report["blockers"])
+
+    monkeypatch.setattr(
+        runner,
+        "probe_codex_workspace_write",
+        lambda *args, **kwargs: (False, "native sandbox denied the sentinel"),
+    )
+    report = runner.preflight_report(ROOT, [hypothesis], "codex")
+    assert report["workspace_write_ready"] is False
+    assert any("workspace-write" in blocker for blocker in report["blockers"])
+
+    monkeypatch.setattr(
+        runner,
+        "probe_codex_workspace_write",
+        lambda *args, **kwargs: (True, "workspace-write sentinel created"),
+    )
 
     unsupported = runner.Hypothesis(
         identifier="H002",

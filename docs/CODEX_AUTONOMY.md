@@ -41,6 +41,9 @@ Every live command therefore:
 - enables multi-agent execution with bounded depth and concurrency;
 - ignores user config and enables only the checked-in `SubagentStart`/`SubagentStop`
   recorder;
+- explicitly selects the native Windows `elevated` sandbox implementation,
+  because ignoring user config would otherwise discard that machine-level
+  selector even when `workspace-write` is requested;
 - writes role/model lifecycle evidence to an orchestrator-owned directory outside
   the candidate worktree, where the candidate sandbox cannot forge it;
 - sets Codex workspace network access to false;
@@ -83,7 +86,7 @@ Equivalent Make targets are `autonomy-preflight`, `autonomy-dry-run`, and `auton
 
 ## Execution lifecycle
 
-1. **Preflight** probes a working Codex executable, login state, current model catalog, supported CLI options, project venv, clean Git state, required artifacts, specialist profiles, and the selected evaluator.
+1. **Preflight** probes a working Codex executable, login state, current model catalog, supported CLI options, project venv, clean Git state, required artifacts, specialist profiles, and the selected evaluator. On native Windows it also runs a model-free `codex sandbox` check that must create a temporary workspace sentinel; parsing `--help` alone is not accepted as proof of write access.
 2. **Preregistration** loads the hypothesis, controls, falsifier, primary metric, allowed paths, and baseline SHA-256. The outer runner writes the complete `experiment.json` and records its byte SHA-256 before Codex starts. The same bytes are required after Codex, after every host-side candidate process, before acceptance, and before staging; the parsed payload must also exactly equal the generated contract.
 3. **Isolation** creates `../.focus-fabric-worktrees/<hypothesis>-<timestamp>` and records its starting commit.
 4. **Agent run** injects the checked-in specialist roles. The agent is forbidden to commit or alter Git history. Trusted lifecycle hooks record each required role's start, stop, and actual model outside the candidate worktree.
@@ -96,7 +99,7 @@ Root ledger and run reports are written to ignored `autonomy/state/` and `result
 
 ## Failure behavior
 
-Codex command failure, model/config mismatch, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
+Codex command failure, model/config mismatch, unavailable native workspace-write sandbox, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
 
 The root lock is released in a `finally` block. A stale lock after a machine crash must be inspected before manual removal; never delete it while another cycle may still be running.
 

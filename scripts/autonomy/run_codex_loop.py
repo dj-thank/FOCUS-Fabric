@@ -245,6 +245,20 @@ def resolve_codex_runtime(requested: str) -> CodexRuntime:
     raise PipelineError(f"no working Codex executable ({detail})")
 
 
+def native_sandbox_overrides(platform_name: str) -> list[str]:
+    """Return the OS-level sandbox implementation required by isolated exec.
+
+    ``--ignore-user-config`` is intentional for reproducibility, but on native
+    Windows it also removes the implementation selector that makes
+    ``workspace-write`` writable.  Keep that selector explicit in every
+    generated command instead of relying on a machine-local default.
+    """
+
+    if platform_name == "nt":
+        return ["-c", 'windows.sandbox="elevated"']
+    return []
+
+
 def build_codex_exec_command(
     runtime: CodexRuntime,
     *,
@@ -282,6 +296,7 @@ def build_codex_exec_command(
         "agents.interrupt_message=true",
         "-c",
         "sandbox_workspace_write.network_access=false",
+        *native_sandbox_overrides(os.name),
         "-c",
         "allow_login_shell=false",
         "-c",
@@ -348,6 +363,68 @@ def build_codex_exec_command(
         overrides.extend(["-c", f"hooks.{event_name}={handler}"])
     command[insertion_point:insertion_point] = overrides
     return command
+
+
+def probe_codex_workspace_write(
+    runtime: CodexRuntime,
+    root: Path,
+    *,
+    environment: dict[str, str],
+    platform_name: str = os.name,
+) -> tuple[bool, str]:
+    """Prove the native Windows sandbox can create a workspace sentinel."""
+
+    if platform_name != "nt":
+        return True, "native Windows workspace-write probe not required"
+
+    state_root = (root / "autonomy" / "state").resolve()
+    state_root.mkdir(parents=True, exist_ok=True)
+    probe_root = (state_root / f"preflight-sandbox-{secrets.token_hex(8)}").resolve()
+    if not probe_root.is_relative_to(state_root):
+        raise PipelineError(f"unsafe sandbox probe path: {probe_root}")
+    probe_root.mkdir(parents=False, exist_ok=False)
+    sentinel = probe_root / "workspace-write.ok"
+    command = [
+        str(runtime.path),
+        "sandbox",
+        *native_sandbox_overrides(platform_name),
+        "-P",
+        ":workspace",
+        "-C",
+        str(probe_root),
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        (
+            "Set-Content -LiteralPath (Join-Path (Get-Location) "
+            "'workspace-write.ok') -Value 'ok' -NoNewline -Encoding ascii"
+        ),
+    ]
+    try:
+        completed = run(
+            command,
+            cwd=root,
+            timeout=30,
+            environment=environment,
+            inherit_environment=False,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()[-1000:]
+            return False, f"native sandbox command failed: {detail or completed.returncode}"
+        if not sentinel.is_file():
+            return False, "native sandbox did not create the workspace-write sentinel"
+        if sentinel.read_text(encoding="ascii") != "ok":
+            return False, "native sandbox created an invalid workspace-write sentinel"
+        return True, "workspace-write sentinel created"
+    finally:
+        if (
+            probe_root.exists()
+            and probe_root.is_relative_to(state_root)
+            and probe_root.name.startswith("preflight-sandbox-")
+        ):
+            shutil.rmtree(probe_root)
 
 
 def load_hypotheses(path: Path) -> tuple[dict[str, Any], list[Hypothesis]]:
@@ -679,6 +756,8 @@ def preflight_report(
     required_models: list[str] = []
     model_catalog_ready = False
     bootstrap_ready = False
+    workspace_write_ready = False
+    workspace_write_detail = "not checked"
     try:
         runtime = resolve_codex_runtime(requested_codex)
         codex_environment = codex_cli_environment()
@@ -764,6 +843,17 @@ def preflight_report(
                 "explicit Codex agent bootstrap was rejected: "
                 + bootstrap_result.stderr.strip()[-1000:]
             )
+
+        workspace_write_ready, workspace_write_detail = probe_codex_workspace_write(
+            runtime,
+            root,
+            environment=codex_environment,
+        )
+        if not workspace_write_ready:
+            blockers.append(
+                "Codex workspace-write sandbox is unavailable: "
+                + workspace_write_detail
+            )
     except (PipelineError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
         blockers.append(f"Codex runtime preflight failed: {error}")
 
@@ -777,7 +867,13 @@ def preflight_report(
         bootstrap_ready,
     )
     ready_for_dry_run = all(dry_run_requirements)
-    ready_for_execute = ready_for_dry_run and root_clean and logged_in and not unsupported
+    ready_for_execute = (
+        ready_for_dry_run
+        and root_clean
+        and logged_in
+        and workspace_write_ready
+        and not unsupported
+    )
     if ready_for_dry_run and not ready_for_execute:
         warnings.append("dry-run is available, but live execute remains blocked")
     return {
@@ -799,6 +895,8 @@ def preflight_report(
         "command_compatible": command_compatible,
         "agent_bootstrap": "explicit-cli-overrides",
         "bootstrap_ready": bootstrap_ready,
+        "workspace_write_ready": workspace_write_ready,
+        "workspace_write_detail": workspace_write_detail,
         "required_models": required_models,
         "catalog_models": catalog_models,
         "model_catalog_ready": model_catalog_ready,
