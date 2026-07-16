@@ -31,7 +31,9 @@ dev = [
   "pytest>=8",
   "matplotlib>=3.8",
   "build>=1.2",
+  "setuptools>=69",
   "twine>=5",
+  "wheel>=0.43",
 ]
 hf = [
   "transformers>=4.48,<6",
