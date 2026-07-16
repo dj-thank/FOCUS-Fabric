@@ -21,6 +21,14 @@ make gate
 
 This compiles Python sources, runs unit tests, verifies claim artifact hashes/paths, and scans documentation/evidence drift.
 
+## Build and verify Python distributions
+
+```bash
+make package-check
+```
+
+The packaging target requires a clean tracked tree, exports exact Git `HEAD` into an isolated workspace directory, and builds the wheel and sdist there with no stale egg-info or untracked files. It then inspects both archives without extracting them. It fails closed on unsafe paths, artifact symlinks, links inside an archive, missing package payloads, a metadata-version mismatch, or public distributions containing `.safetensors`, `.pt`, `.pth`, `.ckpt`, `.bin`, or `.onnx` files. Source ZIP generation applies the same case-insensitive suffix policy and verifies the generated ZIP against the tracked member set. Its manifest binds the wheel/sdist hashes to the same source commit. Final (non-candidate) release generation fetches `origin/main` and additionally requires the checked-out `main` commit to exactly match it; use `--candidate` for a pre-merge archive. Release generation must not continue if any of these checks fails.
+
 ## Rebuild evidence
 
 ```bash

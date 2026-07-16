@@ -1,4 +1,4 @@
-# FOCUS-Fabric 2026.07
+# FOCUS-Fabric 2026.07 / v0.2.1
 
 **古いKVを「残す／捨てる」だけでなく、「将来のqueryへどう応答するか」に変換する。**
 
@@ -202,6 +202,14 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe scripts\autonomy\validate_claims.py
 .\.venv\Scripts\python.exe scripts\autonomy\detect_drift.py
 ```
+
+公開用のwheelとsdistは、通常のtestとは別にarchive内部まで検査します。
+
+```bash
+make package-check
+```
+
+このgateはcleanなGit `HEAD`だけを隔離した作業領域へexportして再buildし、path traversal、artifact symlink、archive内link、version不一致、package本体の欠落に加え、公開対象外の`.safetensors` / `.pt` / `.pth` / `.ckpt` / `.bin` / `.onnx`が一つでも入れば失敗します。wheelはsource tree外の一時targetへinstallしてimportし、source ZIPも同じsuffix policyで生成後に再検査します。`0.2.0`の公開前sdist候補は、この検査を遡って適用した結果checkpoint weight混入が判明したため、公開せず`0.2.1`へ置き換えています。
 
 Linux/macOSでは、次のtargetがcommitted evidence artifactを再生成します。
 

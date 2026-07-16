@@ -2,9 +2,9 @@
 
 ## Decision
 
-**Ready as an unsigned research-preview release; not ready as a production inference engine or superior-LLM claim.**
+**Ready as a `0.2.1` unsigned research-preview candidate; not ready as a production inference engine or superior-LLM claim.**
 
-The 2026-07-14 release snapshot contains an installable package, repaired checkpoint mechanism, heterogeneous memory compiler, online hierarchy, fallback and monitoring controls, semantic agent ledger, verified greedy decoder, FOCUS-Native loss, optional Triton kernel, Hugging Face SDPA trace collector, Codex experiment orchestrator, tests, CI, evidence artifacts, and a machine-verifiable claim ledger. Post-release changes on `main` are not a new release until a new identity, commit, manifest, checksums, and human authorization are fixed.
+The `0.2.1` candidate contains an installable package, repaired checkpoint mechanism, heterogeneous memory compiler, online hierarchy, fallback and monitoring controls, semantic agent ledger, verified greedy decoder, FOCUS-Native loss, optional Triton kernel, Hugging Face SDPA trace collector, Codex experiment orchestrator, tests, CI, evidence artifacts, and a machine-verifiable claim ledger. A locally retained pre-publication `0.2.0` sdist candidate was quarantined after archive inspection found excluded `.safetensors` checkpoint payloads. It must not be published. The successor pipeline exports exact clean Git `HEAD` to an isolated build directory, excludes common model-weight suffixes recursively and case-insensitively, and verifies wheel, sdist, clean-target imports, and generated source-ZIP members. Candidate archives are explicitly labeled; final generation fetches canonical GitHub `origin/main` and requires `HEAD` to match the fetched commit. The exact `0.2.1` source commit, manifest, Python-distribution hashes, and source-ZIP checksums are fixed only when the reviewed release assets are built.
 
 ## Evidence classes
 
@@ -41,3 +41,4 @@ A stronger release title such as “production-ready,” “faster,” “nearly
 - The public reversible hierarchy retains an O(N) exact cold source of truth.
 - The original symbolic tokenizer was not present in the archived FOCUS-Native export.
 - A live autonomous candidate improved the fixed public benchmark but produced no measurable effect in any of four paired randomized holdout cases; it was not promoted, and the evaluator now rejects this failure mode.
+- The pre-publication `0.2.0` sdist candidate included local checkpoint weights despite the intended public exclusion; it is quarantined rather than relabeled as publishable evidence.

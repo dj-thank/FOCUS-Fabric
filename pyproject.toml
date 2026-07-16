@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "focus-fabric"
-version = "0.2.0"
+version = "0.2.1"
 description = "Heterogeneous, uncertainty-gated memory fabric for Transformer KV state and long-horizon agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,7 @@ dev = [
   "pytest>=8",
   "matplotlib>=3.8",
   "build>=1.2",
+  "twine>=5",
 ]
 hf = [
   "transformers>=4.48,<6",

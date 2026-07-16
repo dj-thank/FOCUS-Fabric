@@ -20,4 +20,5 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[dev]'
       - run: make gate
+      - run: make package-check
       - run: python scripts/autonomy/holdout_evaluator.py --source src --seed 17072026 --cases 1 --output /tmp/holdout.json

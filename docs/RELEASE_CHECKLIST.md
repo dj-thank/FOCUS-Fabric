@@ -1,6 +1,6 @@
 # Release Checklist
 
-Status date: **2026-07-17**. Checked packaging items describe the retained 2026-07-14 `0.2.0` release snapshot unless stated otherwise. Post-release `main` changes are not silently folded into that release; a new release must choose a new identity and fixed source commit before regenerating metadata.
+Status date: **2026-07-17**. The successor identity is `FOCUS_Fabric_2026-07_0.2.1_release` / `0.2.1`. The supplied pre-publication `0.2.0` sdist is quarantined and is not an authorized public artifact. A final `0.2.1` GitHub release still requires a reviewed fixed commit and artifacts built from that commit.
 
 ## Code and packaging
 
@@ -12,6 +12,8 @@ Status date: **2026-07-17**. Checked packaging items describe the retained 2026-
 - [x] `twine check dist/*`
 - [x] no secrets, absolute private paths, or transient worktrees in the release tree
 - [x] release generation enumerates Git-tracked regular files only and binds metadata generation to a clean HEAD commit
+- [x] Python distributions are rebuilt from an isolated export of exact clean Git `HEAD`, excluding stale/untracked build state, and recursive model-weight exclusions are applied
+- [x] wheel and sdist members are independently checked for unsafe paths, links, excluded weight payloads, required package files, and exact metadata version
 - [x] license, citation, contribution, and security files present
 
 ## Evidence
@@ -33,8 +35,11 @@ Status date: **2026-07-17**. Checked packaging items describe the retained 2026-
 - [x] prompt/tool-output injection substrate tests run
 - [x] Codex-generated candidate code executed in an isolated Windows worktree; the run completed all gates, remained unpromoted, and the strengthened paired holdout rejects it as insensitive
 - [ ] release manifest signed by an external identity
-- [ ] human authorization for public hosting and deployment
-- [ ] choose a new release identity/date/commit and regenerate manifest/checksums in a clean checkout for post-`0.2.0` `main`
+- [ ] attach an externally auditable operator approval to the GitHub PR/release (the interactive publication request is not independently verifiable from the repository)
+- [ ] deployment authorization beyond source/release publication
+- [x] choose a distinct `0.2.1` release identity and date
+- [ ] merge the reviewed release PR, fetch `origin/main`, then build the final manifest/checksums from that exact commit (enforced by the release builder)
+- [ ] publish the verified artifacts under a `v0.2.1` GitHub release
 
 ## Capability wording
 
@@ -46,4 +51,4 @@ Status date: **2026-07-17**. Checked packaging items describe the retained 2026-
 
 ## Publication decision
 
-The retained `0.2.0` code, CPU evidence, claim ledger, source distribution, wheel, and unsigned archive remain suitable for a **research preview**. Current `main` is a post-release development state, not a rebuilt archive. A new public artifact requires a distinct release identity plus the still-open official-benchmark, GPU, external-signature, and human-authorization decisions appropriate to its wording.
+The retained CPU evidence and claim ledger remain suitable for the carefully scoped **research preview** wording. The pre-publication `0.2.0` sdist itself is not suitable for publication because it contains excluded local checkpoint weights. `0.2.1` is the clean successor candidate; it does not change the still-open official-benchmark, GPU, external-signature, deployment, or stronger-capability gates.
