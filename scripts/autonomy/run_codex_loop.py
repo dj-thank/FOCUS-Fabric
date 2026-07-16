@@ -423,12 +423,21 @@ def codex_cli_environment() -> dict[str, str]:
     return environment
 
 
+def git_command(args: Iterable[str], cwd: Path) -> list[str]:
+    safe_directory = cwd.resolve().as_posix()
+    return ["git", "-c", f"safe.directory={safe_directory}", *args]
+
+
 def git_output(args: Iterable[str], cwd: Path) -> str:
-    return run(["git", *args], cwd=cwd).stdout.strip()
+    return run(git_command(args, cwd), cwd=cwd).stdout.strip()
 
 
 def assert_git_repository(root: Path) -> None:
-    if run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root, check=False).returncode:
+    if run(
+        git_command(["rev-parse", "--is-inside-work-tree"], root),
+        cwd=root,
+        check=False,
+    ).returncode:
         raise PipelineError("execute mode requires a git repository")
 
 
@@ -441,7 +450,7 @@ def assert_clean(root: Path) -> None:
 def tracked_tree_sha256(root: Path) -> str:
     """Hash every tracked path's actual bytes, independent of index status flags."""
 
-    raw_paths = run(["git", "ls-files", "-z", "--"], cwd=root).stdout
+    raw_paths = run(git_command(["ls-files", "-z", "--"], root), cwd=root).stdout
     digest = hashlib.sha256()
     for relative in sorted(path for path in raw_paths.split("\0") if path):
         path = root / relative
@@ -983,7 +992,12 @@ def stage_validated_paths(worktree: Path, paths: Iterable[str]) -> None:
         normalized = normalize_repo_path(item)
         path = worktree / normalized
         if not path.exists():
-            run(["git", "update-index", "--force-remove", "--", normalized], cwd=worktree)
+            run(
+                git_command(
+                    ["update-index", "--force-remove", "--", normalized], worktree
+                ),
+                cwd=worktree,
+            )
             continue
         if path.is_symlink() or not path.is_file():
             raise PromotionIntegrityError(
@@ -1000,13 +1014,15 @@ def stage_validated_paths(worktree: Path, paths: Iterable[str]) -> None:
                 f"unsupported Git file mode for {normalized}: {mode}"
             )
         run(
-            [
-                "git",
-                "update-index",
-                "--add",
-                "--cacheinfo",
-                f"{mode},{blob},{normalized}",
-            ],
+            git_command(
+                [
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    f"{mode},{blob},{normalized}",
+                ],
+                worktree,
+            ),
             cwd=worktree,
         )
 
@@ -1021,6 +1037,20 @@ def orchestrator_mutable_paths(hypothesis: Hypothesis) -> set[str]:
         f"{experiment_root}/holdout-candidate.json",
         f"{experiment_root}/orchestrator-result.json",
     }
+
+
+def assert_candidate_path_set_unchanged(
+    initial_immutable_paths: Iterable[str],
+    final_changes: Iterable[str],
+    hypothesis: Hypothesis,
+) -> None:
+    before = set(initial_immutable_paths)
+    after = set(final_changes) - orchestrator_mutable_paths(hypothesis)
+    if after != before:
+        raise CandidateIntegrityError(
+            "candidate path set changed after gates: "
+            f"before={sorted(before)}, after={sorted(after)}"
+        )
 
 
 def validate_candidate_state(
@@ -1703,7 +1733,12 @@ def execute_one(
     baseline = root / "results/fabric_benchmark.json"
     baseline_digest = sha256_file(baseline)
     root_snapshot = capture_root_snapshot(root)
-    run(["git", "worktree", "add", "-b", branch, str(worktree), "HEAD"], cwd=root)
+    run(
+        git_command(
+            ["worktree", "add", "-b", branch, str(worktree), "HEAD"], root
+        ),
+        cwd=root,
+    )
     start_head = git_output(["rev-parse", "HEAD"], worktree)
     experiment_dir = worktree / "results" / "experiments" / hypothesis.identifier
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -2062,6 +2097,9 @@ def execute_one(
         return result
     try:
         assert_file_sha256(contract_path, contract_sha256, "experiment contract")
+        assert_candidate_path_set_unchanged(
+            immutable_candidate_paths, final_changes, hypothesis
+        )
         if candidate_blob_map(worktree, immutable_candidate_paths) != tested_candidate_blobs:
             raise CandidateIntegrityError(
                 "candidate code/evidence changed after successful gates"
@@ -2114,16 +2152,18 @@ def execute_one(
         if commit_hooks_path.exists():
             raise PromotionIntegrityError("commit hooks path unexpectedly exists")
         run(
-            [
-                "git",
-                "-c",
-                f"core.hooksPath={commit_hooks_path}",
-                "-c",
-                "commit.gpgSign=false",
-                "commit",
-                "-m",
-                f"experiment: {hypothesis.identifier}",
-            ],
+            git_command(
+                [
+                    "-c",
+                    f"core.hooksPath={commit_hooks_path}",
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "-m",
+                    f"experiment: {hypothesis.identifier}",
+                ],
+                worktree,
+            ),
             cwd=worktree,
         )
         try:
@@ -2144,16 +2184,18 @@ def execute_one(
         if merge_hooks_path.exists():
             raise PromotionIntegrityError("merge hooks path unexpectedly exists")
         run(
-            [
-                "git",
-                "-c",
-                f"core.hooksPath={merge_hooks_path}",
-                "-c",
-                "merge.verifySignatures=false",
-                "merge",
-                "--ff-only",
-                candidate_commit,
-            ],
+            git_command(
+                [
+                    "-c",
+                    f"core.hooksPath={merge_hooks_path}",
+                    "-c",
+                    "merge.verifySignatures=false",
+                    "merge",
+                    "--ff-only",
+                    candidate_commit,
+                ],
+                root,
+            ),
             cwd=root,
         )
         try:

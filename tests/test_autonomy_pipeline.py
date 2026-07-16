@@ -806,6 +806,35 @@ def test_candidate_state_is_rechecked_after_generated_gates(monkeypatch, tmp_pat
         runner.validate_candidate_state(tmp_path, hypothesis, "abc123")
 
 
+def test_candidate_cannot_add_a_new_allowed_path_after_gates() -> None:
+    runner = load_runner()
+    hypothesis = runner.Hypothesis(
+        identifier="H001",
+        title="title",
+        rationale="rationale",
+        controls=(),
+        primary_metric="metric",
+        disconfirming_condition="condition",
+        allowed_files=("src/focus_fabric/codecs.py", "tests/"),
+        status="pending",
+    )
+    initial = [
+        "results/experiments/H001/experiment.json",
+        "src/focus_fabric/codecs.py",
+    ]
+    final = [
+        *initial,
+        "tests/test_late_injection.py",
+        "results/candidate_benchmark.json",
+        "results/experiments/H001/holdout-baseline.json",
+        "results/experiments/H001/holdout-candidate.json",
+        "results/experiments/H001/orchestrator-result.json",
+    ]
+
+    with pytest.raises(runner.CandidateIntegrityError, match="path set changed"):
+        runner.assert_candidate_path_set_unchanged(initial, final, hypothesis)
+
+
 def test_accepted_candidate_is_not_committed_without_auto_promote(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -838,7 +867,7 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
 
     def fake_run(command, **kwargs):
         commands.append(command)
-        if command[:3] == ["git", "worktree", "add"]:
+        if command[0] == "git" and "worktree" in command and "add" in command:
             worktree = Path(command[-2])
             profile_dir = worktree / ".codex" / "agents"
             profile_dir.mkdir(parents=True)
@@ -958,8 +987,8 @@ def test_accepted_candidate_is_not_committed_without_auto_promote(
     assert result["status"] == "accepted"
     assert result["promoted"] is False
     assert result["agent_changed_files"] == ["src/focus_fabric/codecs.py"]
-    assert not any(command[:2] == ["git", "commit"] for command in commands)
-    assert not any(command[:2] == ["git", "merge"] for command in commands)
+    assert not any(command[0] == "git" and "commit" in command for command in commands)
+    assert not any(command[0] == "git" and "merge" in command for command in commands)
     events = [
         json.loads(line)["event"]
         for line in (root / "autonomy/state/events.jsonl")
