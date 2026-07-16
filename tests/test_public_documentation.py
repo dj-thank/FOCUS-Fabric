@@ -5,11 +5,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_TERMINOLOGY_DOCS = (
     ROOT / "README.md",
     ROOT / "AGENTS.md",
-    ROOT / "docs" / "FOCUS_LINEAGE.md",
-    ROOT / "docs" / "EVALUATION.md",
-    ROOT / "docs" / "MODEL_CARD.md",
-    ROOT / "docs" / "PAPER_DRAFT.md",
-    ROOT / "docs" / "PUBLICATION_STATUS.md",
+    ROOT / "CHANGELOG.md",
+    ROOT / "references" / "literature_2026-07.json",
+    ROOT / "checkpoints" / "focus-native-small" / "metadata.json",
+    ROOT / "checkpoints" / "focus-native-memory-code" / "metadata.json",
+    ROOT / "src" / "focus_native" / "model.py",
+    ROOT / "src" / "focus_fabric" / "training.py",
+    *sorted((ROOT / "docs").glob("*.md")),
 )
 DEPRECATED_FOCUS_TERMS = (
     "旧FOCUS",
@@ -18,6 +20,12 @@ DEPRECATED_FOCUS_TERMS = (
     "legacy FOCUS",
     "legacy operator",
     "legacy mechanism",
+    "legacy-mechanism",
+    "legacy-memory-code",
+    "earlier FOCUS-Native prototype export",
+    "earlier FOCUS-Native export",
+    "FOCUS operators",
+    "FOCUS-native",
 )
 
 

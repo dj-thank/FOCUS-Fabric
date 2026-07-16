@@ -11,6 +11,6 @@
 - Added PyTorch/Triton Gaussian codec ABI, official-suite runner, GPU status benchmark, and controlled evidence.
 - Added Codex worktree autonomy, specialist agents, claim ledger, drift gate, and post-hoc randomized holdout.
 
-## 0.1.0 — earlier prototype
+## 0.1.0 — FOCUS-Native foundation
 
-- Analytic local FOCUS operator cache and controlled attention demonstration.
+- Analytic local FOCUS-Native operator cache and controlled attention demonstration.

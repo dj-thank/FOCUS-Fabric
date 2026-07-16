@@ -25,7 +25,9 @@ The safe default is:
 - no teacher-forced token-agreement regression;
 - free-running sequence agreement remains true;
 - repeated compaction produces zero invalid codec outputs;
-- randomized holdout safety passes.
+- randomized holdout safety passes;
+- the paired randomized holdout has a measurable effect in at least one case;
+- neither the aggregate nor any paired case exceeds its preregistered 2% regression bound.
 
 H002-H004 remain useful preregistrations, but preflight blocks live execution until each has a dedicated evaluator. They are not silently judged with H001's metric.
 
@@ -97,14 +99,22 @@ Equivalent Make targets are `autonomy-preflight`, `autonomy-dry-run`, and `auton
 4. **Agent run** injects the checked-in default and specialist role contracts, the project venv on `PATH`, its absolute path as `FOCUS_PYTHON`, and only the candidate `src` on `PYTHONPATH`. The prompt supplies platform-neutral Python gate commands; GNU Make is optional, and package installation is forbidden. The agent is forbidden to commit or alter Git history. After Codex exits, the outer runner binds the CLI's `thread.started` id to newly created host session records and requires a completed runtime record for every role and configured model.
 5. **Validation** checks the final JSON schema/status, its hash, exact agreement between self-reported and Git-observed changes, history immutability, and exact file/directory boundaries. The same scope check runs again after gates and evidence generation.
 6. **Trusted gates** load `autonomy/gates.json` and the original test suite from the root checkout, while importing candidate source. Python commands are pinned to the project interpreter and receive a credential-free environment. The CPU evidence gate receives the already verified root checkpoint explicitly; no ignored weight is inferred from the candidate worktree. Plotting is fixed to the headless `Agg` backend. After Codex and after every host-side candidate process, the runner verifies the root HEAD, status, baseline digest, local-checkpoint digest, and byte-level digest of every tracked root file before continuing.
-7. **Holdout and decision** compare root and candidate on the same seed generated only after the agent run, then apply the H001 metric contract.
+7. **Holdout and decision** compare root and candidate on the same seed generated only after the agent run. The version-2 artifact binds schema, seed, case count, per-case identity, per-case objective, and aggregate objective. Acceptance requires both safety flags, aggregate and per-case non-regression, and a preregistered minimum effect in at least one paired case before applying the H001 primary-metric contract. A candidate that changes only the public benchmark while leaving the randomized holdout numerically insensitive is rejected.
 8. **Retention** leaves the branch and worktree intact for human inspection. With no `--auto-promote`, even an accepted candidate stays uncommitted. Automatic promotion is also blocked if an existing tracked test was changed or deleted; new tests may be promoted only with the candidate implementation. When promotion is explicitly enabled, the runner fixes the staged Git tree before commit, disables repository hooks with a fresh random nonexistent hooks path for each Git operation, verifies the commit's single parent, tree, and exact diff paths, and merges that verified commit hash rather than a mutable branch name. The merged root HEAD, clean status, and tracked-file byte digest must then match the validated candidate.
 
 Root ledger and run reports are written to ignored `autonomy/state/` and `results/autonomy_runs/`, so one run does not make the next preflight dirty.
 
+## Latest local validation
+
+The Windows cycle started at `2026-07-16T19:48:47Z` completed all six required specialist roles with the observed `gpt-5.6-luna` runtime, OpenAI provider, and terminal completion records. Candidate gates reported 54 passed / 2 skipped; trusted-root tests reported 55 passed; claim validation covered 30 claims; drift and the then-current randomized holdout passed. Automatic promotion was not requested, so no candidate commit, merge, push, tag, or release occurred.
+
+That run is retained as an operational validation and a negative scientific result, not as new release evidence. Its version-1 decision called the candidate accepted because the fixed primary benchmark improved at matched bytes. Independent review found that the added test exercised forced exact fallback rather than the changed approximate routing, while the four paired holdout objectives changed by only `4.2004866e-10` in aggregate and by at most `1.7293130e-9` per case. Re-evaluation under the now-preregistered version-2 paired policy reports `effect_detected=false`, `changed_cases=0`, and rejection reason `insensitive`. The uncommitted candidate remains isolated for audit and is not eligible for promotion under the current contract.
+
+The detailed parent report remains local and ignored by design. The public repository continues to expose only evidence that is deliberately committed; local session identifiers and absolute host paths are not publication evidence.
+
 ## Failure behavior
 
-Codex command failure, missing or ambiguous parent thread metadata, role/model/provider mismatch, unavailable native workspace-write sandbox, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
+Codex command failure, missing or ambiguous parent thread metadata, role/model/provider mismatch, unavailable native workspace-write sandbox, agent `failed` or `blocked` status, missing or invalid result JSON, experiment-contract mismatch, self-report mismatch, agent-created commit, scope escape, trusted-root mutation, deterministic gate failure, malformed/unpaired/insensitive holdout evidence, holdout regression, or primary-metric failure all produce a non-promoted result. The worktree is preserved so the failure can be audited rather than erased.
 
 The root lock is released in a `finally` block. A stale lock after a machine crash must be inspected before manual removal; never delete it while another cycle may still be running.
 

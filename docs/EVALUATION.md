@@ -38,7 +38,7 @@ Certificate coverage is 0.9688 in distribution and 0.8073 under shift. The latte
 The retained suite contains three independently seeded runs totaling 11 controlled attention cases. `results/randomized_holdout_suite.json` is a deterministic aggregation of the three raw artifacts. All three runs passed the safety condition, the worst run-level Fabric-to-best-single-family NMSE ratio was 0.098802554956204, forced exact fallback had maximum absolute error 0.0, and no invalid outputs occurred. The suite is a mechanism stress test only; it cannot substitute for natural-language or official long-context benchmarks.
 
 
-The trusted evaluator chooses cases after an autonomous code change. It compares root and candidate source on the same seed and verifies forced exact fallback. The committed self-test reports:
+The trusted evaluator chooses cases after an autonomous code change. It compares root and candidate source on the same seed and verifies forced exact fallback. Version 2 additionally binds schema, seed, case count, per-case identity/objective, aggregate objective, a 2% aggregate and per-case non-regression ceiling, and a minimum measurable effect in at least one case. This prevents a candidate that changes only the fixed public benchmark from passing an insensitive holdout. The committed release self-test reports:
 
 - mean Fabric NMSE: 3.15046594e-05;
 - mean best memory-matched single-family NMSE: 0.000353266912;

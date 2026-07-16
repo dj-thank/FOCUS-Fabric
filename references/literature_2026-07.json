@@ -59,7 +59,7 @@
       "url": "https://arxiv.org/abs/2605.09778",
       "domain": "function approximation",
       "insight": "Fixed-context attention is a query-to-output/log-normalizer function.",
-      "adoption": "Legacy FOCUS operator retained as one analytic local function codec.",
+      "adoption": "FOCUS-Native operator retained as one analytic local function codec.",
       "caveat": "Nectar trains neural regressors; this release uses analytic/local and moment-based candidates."
     },
     {

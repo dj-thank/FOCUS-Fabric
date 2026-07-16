@@ -13,6 +13,6 @@ Read `WEAKNESS_AUDIT.md` for the full adversarial analysis. The highest-impact l
 - repeated compaction evidence is only 128 tokens;
 - semantic ledger tests structure, not reasoning ability;
 - verified decode is greedy-only and the reference backend is unoptimized;
-- autonomous Codex execute mode was not run in this container.
+- a live autonomous Codex cycle was exercised only in the local Windows operator environment; its first candidate was not promoted because the strengthened paired holdout found no measurable effect.
 
 The package is suitable for mechanism research, extension, falsification, and systems integration work. It is not ready for production serving or capability claims.

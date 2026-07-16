@@ -62,7 +62,7 @@ Each selected codec emits an error proxy. Split conformal calibration fits a sca
 
 The certificate is marginal under exchangeability. It is not a mathematical per-query proof. A `DriftSentinel` therefore schedules sparse exact audits, maintains a finite-window Hoeffding interval for miscoverage, and requests strict fallback plus recompilation when the lower confidence bound exceeds the target.
 
-## 5. FOCUS-native training
+## 5. FOCUS-Native training
 
 `focus_native_loss` exposes both an exact teacher path and differentiable compressed-prefix student path. Its terms include:
 
@@ -98,4 +98,4 @@ The release includes a homogeneous-batch fused Triton ABI for Gaussian codecs an
 
 ## 9. Codex research control plane
 
-Each hypothesis is preregistered with allowed files, expected mechanism, falsifier, and resource budget. `run_codex_loop.py` creates a separate Git worktree, invokes `codex exec` with JSONL events and an output schema, rejects out-of-scope changes, runs deterministic gates, and then invokes a trusted post-hoc randomized evaluator outside the worktree. Promotion requires safety invariants, no holdout regression, and an evidence-score improvement. The event ledger is hash-chained.
+Each hypothesis is preregistered with allowed files, expected mechanism, falsifier, resource budget, and a paired-holdout policy. `run_codex_loop.py` creates a separate Git worktree, invokes `codex exec` with JSONL events and an output schema, rejects out-of-scope changes, runs deterministic gates, and then invokes a trusted post-hoc randomized evaluator outside the worktree. Promotion requires safety invariants, matched case/seed evidence, no aggregate or case-level holdout regression, a measurable holdout effect, and an evidence-score improvement. The event ledger is hash-chained.

@@ -1,6 +1,6 @@
-"""Configuration for the repaired legacy FOCUS-Native demonstrator.
+"""Configuration for the archived FOCUS-Native demonstrator.
 
-The earlier prototype export omitted this module.  The repair makes the
+The development export omitted this module.  The restored package makes the
 checkpoint architecture explicit.  Bundled weights are suitable for numerical
 Q/K/V and cache-mechanism experiments; the original symbolic tokenizer was not
 preserved, so no natural-language capability claim is made for them.

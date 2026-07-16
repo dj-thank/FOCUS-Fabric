@@ -571,7 +571,7 @@ class FocusTransformer(nn.Module):
         Anchors are Lloyd k-means centers in each layer/head query space.  Each
         patch basis is initialized with principal components of the routed
         query cloud.  This removes the arbitrary unit-sphere initialization
-        before post-hoc fitting or FOCUS-native training.
+        before post-hoc fitting or FOCUS-Native training.
         """
         if not batches:
             raise ValueError("at least one calibration batch is required")

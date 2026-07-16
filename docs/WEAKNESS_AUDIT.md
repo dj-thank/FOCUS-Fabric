@@ -75,17 +75,22 @@ Greedy sequence equality is guaranteed only when the verifier oracle itself is t
 
 ## G. Autonomous Codex operation
 
-- Codex CLI was not installed in this container, so only dry-run planning—not a live autonomous code mutation—can be executed here.
+- A live Windows H001 cycle completed six verified `gpt-5.6-luna` specialist roles and all then-declared gates. This proves the local control path can execute; it does not prove the generated candidate is scientifically useful or safe to publish.
+- The version-1 decision marked the candidate accepted on the fixed benchmark, but independent review found that its new test exercised forced exact fallback rather than the changed approximate route. Four paired randomized cases changed by only `4.2004866e-10` in aggregate and no case reached the minimum effect. The candidate was not promoted; the version-2 evaluator now rejects holdout-insensitive changes and case-level regressions.
 - An agent could optimize the public benchmark; the post-hoc randomized holdout reduces accidental overfitting but is not secure against a deliberately evasive candidate.
 - An agent can modify allowed production code and tests. Scope enforcement, immutable root evaluator, claim hashes, and review agents raise the bar but do not replace external review.
 - Autonomous repositories accumulate duplicated patterns and benchmark-specific hacks. The pipeline includes drift scans and cleanup hypotheses, but long-term architectural entropy remains an open risk.
 - `--auto-promote` is opt-in. Publication, release signing, and deployment must remain separately authorized.
 
-## H. Security and privacy
+## H. Release integrity
+
+`RELEASE_MANIFEST.json` and `SHA256SUMS` describe the retained 2026-07-14 `0.2.0` snapshot, not the current post-release `main`. They are intentionally not regenerated under the old identity. The release builder now reads only Git-tracked regular files, rejects missing/link/submodule/path-escape entries, requires a clean tracked tree, and records the exact HEAD commit. This prevents local virtual environments, pytest sandboxes, checkpoints, and other untracked files from leaking into a future archive, but it does not provide a signature or trusted timestamp.
+
+## I. Security and privacy
 
 Exact archives may contain secrets, personal data, or copyrighted context. No encryption-at-rest, retention policy, redaction, tenant isolation, or secure deletion is included. Tool outputs and benchmark files are untrusted input. Running arbitrary external backends requires OS-level sandboxing beyond Python validation.
 
-## I. Claims that are prohibited
+## J. Claims that are prohibited
 
 The current artifacts do not support claims of:
 

@@ -224,6 +224,10 @@ make autonomy-dry-run
 
 既定のexecuteはcandidateをcommitもmergeもしません。inner Codexの既定Pythonをproject venvに、`PYTHONPATH`をcandidate側`src`に固定し、偶発的なglobal Python fallbackやroot実装の誤importをpreflightで防ぎます。H001のcheckpoint評価には、公開対象外のweightを[`checkpoints/README.md`](checkpoints/README.md)記載のpathへ置いたauthorized local copyが必要です。preflightはSHA-256を照合し、weightをworktreeへcopyしません。明示的な別Python起動は技術的に不可能なのではなく規約違反です。automatic promotionは`--auto-promote`を明示した場合だけ有効になり、それでもtests、claim integrity、post-hoc randomized holdout、exactness constraints、H001のprimary-metric contractをすべて通る必要があります。詳しい安全境界は[Codex autonomous operation](docs/CODEX_AUTONOMY.md)を参照してください。
 
+> **自律パイプラインの実運転状態（2026-07-17）**
+>
+> Windows上のH001 live cycleは、6役の`gpt-5.6-luna` specialist、candidate/trusted tests、claims、drift、randomized holdoutまで完走しました。version-1 holdout契約では固定benchmarkの改善によりcandidateを`accepted`と判定しましたが、独立reviewで4件のpaired holdoutへの差が最大でも約1.73e-9、測定可能な変化が0件だったと判明しました。candidateはcommit・merge・pushしていません。現在の契約はcase単位のpaired non-regressionとminimum effectを事前登録し、同じcandidateを`insensitive`として拒否します。これは研究ループが「動いた」ことと、生成コードが「採用に値する」ことを分けるためのfail-closed更新です。
+
 ## 現在の限界
 
 - Exact cold archiveはsource of truthとして残るため、total retained storageはO(N)です。

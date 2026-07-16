@@ -48,7 +48,7 @@ PYTHONPATH=src OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python scripts/autonomy/holdo
 
 The release also retains seeds `314159` and `271828`; `results/randomized_holdout_suite.json` aggregates all three raw runs without replacing them.
 
-Autonomous execute mode chooses a new seed after the code change and compares root/candidate source on identical cases.
+Autonomous execute mode chooses a new seed after the code change and compares root/candidate source on identical cases. The preregistered version-2 policy rejects schema/seed/case mismatches, any paired case above its regression ceiling, and candidates that have no measurable effect in the randomized cases.
 
 ## Archived checkpoint integrity
 

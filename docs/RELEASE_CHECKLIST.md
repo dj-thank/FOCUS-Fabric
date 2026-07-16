@@ -1,6 +1,6 @@
 # Release Checklist
 
-Status date: **2026-07-14**. Checked items were executed or directly inspected in the retained CPU release environment. Open items are publication or hardware gates, not hidden successes.
+Status date: **2026-07-17**. Checked packaging items describe the retained 2026-07-14 `0.2.0` release snapshot unless stated otherwise. Post-release `main` changes are not silently folded into that release; a new release must choose a new identity and fixed source commit before regenerating metadata.
 
 ## Code and packaging
 
@@ -11,6 +11,7 @@ Status date: **2026-07-14**. Checked items were executed or directly inspected i
 - [x] clean-target wheel import succeeds without importing the source tree
 - [x] `twine check dist/*`
 - [x] no secrets, absolute private paths, or transient worktrees in the release tree
+- [x] release generation enumerates Git-tracked regular files only and binds metadata generation to a clean HEAD commit
 - [x] license, citation, contribution, and security files present
 
 ## Evidence
@@ -30,9 +31,10 @@ Status date: **2026-07-14**. Checked items were executed or directly inspected i
 - [x] exact archive assumptions disclosed
 - [x] semantic-memory protected classes reviewed
 - [x] prompt/tool-output injection substrate tests run
-- [ ] Codex-generated candidate code executed in an isolated runner in this environment
+- [x] Codex-generated candidate code executed in an isolated Windows worktree; the run completed all gates, remained unpromoted, and the strengthened paired holdout rejects it as insensitive
 - [ ] release manifest signed by an external identity
 - [ ] human authorization for public hosting and deployment
+- [ ] choose a new release identity/date/commit and regenerate manifest/checksums in a clean checkout for post-`0.2.0` `main`
 
 ## Capability wording
 
@@ -44,4 +46,4 @@ Status date: **2026-07-14**. Checked items were executed or directly inspected i
 
 ## Publication decision
 
-The code, CPU evidence, claim ledger, source distribution, wheel, and unsigned release archive are suitable for a **research preview**. A production or model-capability release remains blocked on the open official-benchmark, GPU, external-signature, and human-authorization gates.
+The retained `0.2.0` code, CPU evidence, claim ledger, source distribution, wheel, and unsigned archive remain suitable for a **research preview**. Current `main` is a post-release development state, not a rebuilt archive. A new public artifact requires a distinct release identity plus the still-open official-benchmark, GPU, external-signature, and human-authorization decisions appropriate to its wording.

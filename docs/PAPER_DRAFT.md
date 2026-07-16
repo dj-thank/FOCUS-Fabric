@@ -96,7 +96,7 @@ merge-friendly when many diffuse contributions live in a low-dimensional
 subspace. Rare identifiers and high-leverage facts may instead require sparse
 exact residuals.
 
-The release therefore treats FOCUS operators as one codec, not as a universal
+The release therefore treats FOCUS-Native operators as one codec, not as a universal
 replacement for KV. The compiler preserves all candidate metrics and Pareto
 status, so a chosen representation can be audited rather than inferred from an
 opaque policy.
@@ -243,8 +243,9 @@ The repository contains a Codex control plane with the following invariants:
    comparison.
 6. Only after the agent finishes does the trusted root generate a randomized
    holdout seed and evaluate root and candidate on identical cases.
-7. Promotion requires exactness constraints, no randomized holdout regression,
-   and a minimum public-evidence improvement; auto-promotion is opt-in.
+7. Promotion requires exactness constraints, paired case-level and aggregate
+   holdout non-regression, a measurable randomized-holdout effect, and a
+   minimum public-evidence improvement; auto-promotion is opt-in.
 8. Events are hash chained and quantitative prose is backed by JSON Pointer,
    artifact SHA-256, and permitted wording.
 
@@ -323,8 +324,9 @@ not measure agent task success or reasoning.
 - Fallback can dominate cold-memory traffic.
 - The CPU compiler is expensive and not a serving implementation.
 - The semantic hash chain is not an authenticated signature.
-- The Codex pipeline was dry-run in this container because the Codex executable
-  was absent; execute mode is supplied but not falsely marked as exercised.
+- A later local Windows Codex cycle exercised execute mode through all declared
+  gates. Its candidate was not promoted: independent review found the paired
+  holdout insensitive, and the strengthened policy rejects that result.
 - The architecture has not established superior general intelligence, official
   benchmark leadership, production speedup, or million-token correctness.
 
