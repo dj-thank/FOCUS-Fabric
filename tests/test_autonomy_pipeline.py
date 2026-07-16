@@ -116,6 +116,7 @@ def test_codex_runtime_skips_a_broken_path_shim(monkeypatch, tmp_path: Path) -> 
     assert runtime.version == "codex-cli 0.130.0"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows desktop runtime discovery")
 def test_windows_codex_candidates_prefer_newest_desktop_runtime(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -877,6 +878,7 @@ def test_trusted_checkpoint_fails_closed_on_missing_or_wrong_bytes(
             runner.os.path,
             "isjunction",
             lambda path: Path(path) == checkpoint.parent or real_isjunction(path),
+            raising=False,
         )
         with pytest.raises(runner.PipelineError, match="links or junctions"):
             runner.trusted_checkpoint_file(tmp_path)

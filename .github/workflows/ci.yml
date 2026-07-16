@@ -22,3 +22,16 @@ jobs:
       - run: make gate
       - run: make package-check
       - run: python scripts/autonomy/holdout_evaluator.py --source src --seed 17072026 --cases 1 --output /tmp/holdout.json
+  windows-autonomy:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m compileall -q scripts/autonomy tests/test_autonomy_pipeline.py
+      - run: python -m pytest -q tests/test_autonomy_pipeline.py
