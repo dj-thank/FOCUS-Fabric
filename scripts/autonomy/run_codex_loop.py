@@ -187,6 +187,115 @@ class EventLedger:
 
 
 @dataclass(frozen=True)
+class HoldoutPolicy:
+    """Preregistered paired-holdout acceptance policy."""
+
+    cases: int = 4
+    max_aggregate_regression: float = 0.02
+    max_case_regression: float = 0.02
+    min_effect_absolute: float = 1e-8
+    min_effect_relative: float = 1e-6
+    min_effect_cases: int = 1
+
+    def __post_init__(self) -> None:
+        cases = exact_nonnegative_integer(self.cases, "holdout cases")
+        min_effect_cases = exact_nonnegative_integer(
+            self.min_effect_cases, "minimum changed holdout cases"
+        )
+        max_aggregate_regression = finite_number(
+            self.max_aggregate_regression,
+            "max aggregate holdout regression",
+            minimum=0.0,
+        )
+        max_case_regression = finite_number(
+            self.max_case_regression,
+            "max per-case holdout regression",
+            minimum=0.0,
+        )
+        min_effect_absolute = finite_number(
+            self.min_effect_absolute,
+            "minimum absolute holdout effect",
+            minimum=0.0,
+        )
+        min_effect_relative = finite_number(
+            self.min_effect_relative,
+            "minimum relative holdout effect",
+            minimum=0.0,
+        )
+        if cases < 1:
+            raise PipelineError("holdout cases must be positive")
+        if not 1 <= min_effect_cases <= cases:
+            raise PipelineError("minimum changed holdout cases must be within holdout cases")
+        if min_effect_absolute == 0.0 and min_effect_relative == 0.0:
+            raise PipelineError("at least one minimum holdout effect must be positive")
+        # Direct constructors are used by trusted tests; reject values that only
+        # compare equal after lossy parsing rather than silently normalizing them.
+        if (
+            cases != self.cases
+            or min_effect_cases != self.min_effect_cases
+            or max_aggregate_regression != self.max_aggregate_regression
+            or max_case_regression != self.max_case_regression
+            or min_effect_absolute != self.min_effect_absolute
+            or min_effect_relative != self.min_effect_relative
+        ):
+            raise PipelineError("holdout policy fields must use canonical numeric types")
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any] | None) -> "HoldoutPolicy":
+        values = {} if payload is None else payload
+        if not isinstance(values, dict):
+            raise PipelineError("holdout_policy must be an object")
+        allowed = {
+            "cases",
+            "max_aggregate_regression",
+            "max_case_regression",
+            "min_effect_absolute",
+            "min_effect_relative",
+            "min_effect_cases",
+        }
+        unknown = sorted(set(values) - allowed)
+        if unknown:
+            raise PipelineError(f"unknown holdout_policy fields: {unknown}")
+        policy = cls(
+            cases=exact_nonnegative_integer(values.get("cases", 4), "holdout cases"),
+            max_aggregate_regression=finite_number(
+                values.get("max_aggregate_regression", 0.02),
+                "max aggregate holdout regression",
+                minimum=0.0,
+            ),
+            max_case_regression=finite_number(
+                values.get("max_case_regression", 0.02),
+                "max per-case holdout regression",
+                minimum=0.0,
+            ),
+            min_effect_absolute=finite_number(
+                values.get("min_effect_absolute", 1e-8),
+                "minimum absolute holdout effect",
+                minimum=0.0,
+            ),
+            min_effect_relative=finite_number(
+                values.get("min_effect_relative", 1e-6),
+                "minimum relative holdout effect",
+                minimum=0.0,
+            ),
+            min_effect_cases=exact_nonnegative_integer(
+                values.get("min_effect_cases", 1), "minimum changed holdout cases"
+            ),
+        )
+        return policy
+
+    def to_json(self) -> dict[str, int | float]:
+        return {
+            "cases": self.cases,
+            "max_aggregate_regression": self.max_aggregate_regression,
+            "max_case_regression": self.max_case_regression,
+            "min_effect_absolute": self.min_effect_absolute,
+            "min_effect_relative": self.min_effect_relative,
+            "min_effect_cases": self.min_effect_cases,
+        }
+
+
+@dataclass(frozen=True)
 class Hypothesis:
     identifier: str
     title: str
@@ -197,6 +306,7 @@ class Hypothesis:
     allowed_files: tuple[str, ...]
     status: str
     evaluator: str | None = None
+    holdout_policy: HoldoutPolicy = HoldoutPolicy()
 
     @classmethod
     def from_json(cls, payload: dict[str, Any]) -> "Hypothesis":
@@ -210,6 +320,7 @@ class Hypothesis:
             allowed_files=tuple(payload["allowed_files"]),
             status=payload["status"],
             evaluator=payload.get("evaluator"),
+            holdout_policy=HoldoutPolicy.from_json(payload.get("holdout_policy")),
         )
 
 
@@ -1222,6 +1333,7 @@ def experiment_contract_for(
             "the Codex implementation phase ends."
         ),
         "primary_metric": hypothesis.primary_metric,
+        "holdout_policy": hypothesis.holdout_policy.to_json(),
         "stopping_rule": (
             "Stop after one bounded Codex execution. The outer evaluator applies "
             "the declared threshold without tuning or retrying on holdout results."
@@ -1999,6 +2111,13 @@ def write_public_orchestrator_result(path: Path, result: dict[str, Any]) -> None
         "baseline_objective",
         "candidate_objective",
         "relative_change",
+        "aggregate_relative_change",
+        "max_case_relative_change",
+        "effect_detected",
+        "changed_cases",
+        "required_changed_cases",
+        "rejection_reasons",
+        "policy",
         "candidate_artifact",
         "candidate_sha256",
         "baseline_artifact",
@@ -2040,6 +2159,190 @@ def write_public_orchestrator_result(path: Path, result: dict[str, Any]) -> None
     path.write_text(json.dumps(public_result, indent=2), encoding="utf-8")
 
 
+def validate_holdout_artifact(
+    payload: Any,
+    policy: HoldoutPolicy,
+    *,
+    seed: int,
+    label: str,
+) -> dict[str, Any]:
+    """Validate trusted evaluator output before comparing paired cases."""
+
+    if not isinstance(payload, dict):
+        raise PipelineError(f"{label} holdout artifact must be an object")
+    schema_version = exact_nonnegative_integer(
+        payload.get("schema_version"), f"{label} holdout schema_version"
+    )
+    if schema_version != 2:
+        raise PipelineError(f"{label} holdout schema_version must be 2")
+    artifact_seed = exact_nonnegative_integer(payload.get("seed"), f"{label} holdout seed")
+    if artifact_seed != seed:
+        raise PipelineError(
+            f"{label} holdout seed mismatch: expected {seed}, observed {artifact_seed}"
+        )
+    artifact_cases = exact_nonnegative_integer(
+        payload.get("cases"), f"{label} holdout cases"
+    )
+    if artifact_cases != policy.cases:
+        raise PipelineError(
+            f"{label} holdout cases mismatch: expected {policy.cases}, "
+            f"observed {artifact_cases}"
+        )
+    safety = payload.get("passed")
+    if not isinstance(safety, bool):
+        raise PipelineError(f"{label} holdout passed must be a boolean")
+    objective = finite_number(
+        payload.get("objective"), f"{label} holdout objective", minimum=0.0
+    )
+    details = payload.get("details")
+    if not isinstance(details, list) or len(details) != policy.cases:
+        raise PipelineError(
+            f"{label} holdout details must contain exactly {policy.cases} cases"
+        )
+
+    normalized_details: list[dict[str, int | float]] = []
+    seen_cases: set[int] = set()
+    for position, item in enumerate(details):
+        if not isinstance(item, dict):
+            raise PipelineError(f"{label} holdout details[{position}] must be an object")
+        case_id = exact_nonnegative_integer(
+            item.get("case"), f"{label} holdout details[{position}].case"
+        )
+        if case_id in seen_cases:
+            raise PipelineError(f"{label} holdout contains duplicate case {case_id}")
+        seen_cases.add(case_id)
+        case_seed = exact_nonnegative_integer(
+            item.get("seed"), f"{label} holdout details[{position}].seed"
+        )
+        expected_case_seed = (seed + 104729 * case_id) % (2**31 - 1)
+        if case_seed != expected_case_seed:
+            raise PipelineError(
+                f"{label} holdout case {case_id} seed mismatch: "
+                f"expected {expected_case_seed}, observed {case_seed}"
+            )
+        fabric_nmse = finite_number(
+            item.get("fabric_nmse"),
+            f"{label} holdout details[{position}].fabric_nmse",
+            minimum=0.0,
+        )
+        active_ratio = finite_number(
+            item.get("active_ratio"),
+            f"{label} holdout details[{position}].active_ratio",
+            minimum=0.0,
+        )
+        case_objective = finite_number(
+            item.get("objective"),
+            f"{label} holdout details[{position}].objective",
+            minimum=0.0,
+        )
+        recomputed = fabric_nmse + 0.04 * active_ratio
+        if not math.isclose(case_objective, recomputed, rel_tol=1e-10, abs_tol=1e-12):
+            raise PipelineError(
+                f"{label} holdout case {case_id} objective does not match its metrics"
+            )
+        normalized_details.append(
+            {
+                "case": case_id,
+                "seed": case_seed,
+                "objective": case_objective,
+            }
+        )
+    expected_cases = set(range(policy.cases))
+    if seen_cases != expected_cases:
+        raise PipelineError(
+            f"{label} holdout case ids mismatch: expected {sorted(expected_cases)}, "
+            f"observed {sorted(seen_cases)}"
+        )
+    normalized_details.sort(key=lambda item: int(item["case"]))
+    recomputed_objective = sum(
+        float(item["objective"]) for item in normalized_details
+    ) / policy.cases
+    if not math.isclose(objective, recomputed_objective, rel_tol=1e-10, abs_tol=1e-12):
+        raise PipelineError(f"{label} aggregate holdout objective does not match details")
+    return {
+        "objective": objective,
+        "passed": safety,
+        "details": normalized_details,
+    }
+
+
+def compare_paired_holdout(
+    baseline_payload: Any,
+    candidate_payload: Any,
+    policy: HoldoutPolicy,
+    *,
+    seed: int,
+) -> dict[str, Any]:
+    """Apply the preregistered effect and non-regression policy case by case."""
+
+    baseline = validate_holdout_artifact(
+        baseline_payload, policy, seed=seed, label="baseline"
+    )
+    candidate = validate_holdout_artifact(
+        candidate_payload, policy, seed=seed, label="candidate"
+    )
+    baseline_details = baseline["details"]
+    candidate_details = candidate["details"]
+    baseline_pairing = [
+        (item["case"], item["seed"]) for item in baseline_details
+    ]
+    candidate_pairing = [
+        (item["case"], item["seed"]) for item in candidate_details
+    ]
+    if baseline_pairing != candidate_pairing:
+        raise PipelineError("candidate holdout case/seed pairing differs from baseline")
+
+    baseline_objective = float(baseline["objective"])
+    candidate_objective = float(candidate["objective"])
+    aggregate_relative_change = (
+        candidate_objective - baseline_objective
+    ) / max(abs(baseline_objective), 1e-12)
+    case_relative_changes: list[float] = []
+    changed_cases = 0
+    for baseline_case, candidate_case in zip(baseline_details, candidate_details):
+        baseline_case_objective = float(baseline_case["objective"])
+        candidate_case_objective = float(candidate_case["objective"])
+        difference = candidate_case_objective - baseline_case_objective
+        relative_change = difference / max(abs(baseline_case_objective), 1e-12)
+        case_relative_changes.append(relative_change)
+        effect_floor = max(
+            policy.min_effect_absolute,
+            policy.min_effect_relative * abs(baseline_case_objective),
+        )
+        if abs(difference) >= effect_floor:
+            changed_cases += 1
+
+    max_case_relative_change = max(case_relative_changes)
+    effect_detected = changed_cases >= policy.min_effect_cases
+    rejection_reasons: list[str] = []
+    if baseline["passed"] is not True:
+        rejection_reasons.append("baseline_safety")
+    if candidate["passed"] is not True:
+        rejection_reasons.append("candidate_safety")
+    if aggregate_relative_change > policy.max_aggregate_regression:
+        rejection_reasons.append("aggregate_regression")
+    if max_case_relative_change > policy.max_case_regression:
+        rejection_reasons.append("case_regression")
+    if not effect_detected:
+        rejection_reasons.append("insensitive")
+    return {
+        "passed": not rejection_reasons,
+        "baseline_objective": baseline_objective,
+        "candidate_objective": candidate_objective,
+        "relative_change": aggregate_relative_change,
+        "aggregate_relative_change": aggregate_relative_change,
+        "max_case_relative_change": max_case_relative_change,
+        "case_relative_changes": case_relative_changes,
+        "baseline_safety_passed": baseline["passed"],
+        "candidate_safety_passed": candidate["passed"],
+        "effect_detected": effect_detected,
+        "changed_cases": changed_cases,
+        "required_changed_cases": policy.min_effect_cases,
+        "rejection_reasons": rejection_reasons,
+        "policy": policy.to_json(),
+    }
+
+
 def run_external_holdout(
     root: Path,
     worktree: Path,
@@ -2052,6 +2355,7 @@ def run_external_holdout(
     """Evaluate root and candidate code on the same post-hoc random cases."""
 
     seed = secrets.randbits(31)
+    policy = hypothesis.holdout_policy
     evaluator = root / "scripts/autonomy/holdout_evaluator.py"
     evidence_dir = worktree / "results/experiments" / hypothesis.identifier
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -2078,7 +2382,7 @@ def run_external_holdout(
                 "--seed",
                 str(seed),
                 "--cases",
-                "4",
+                str(policy.cases),
                 "--output",
                 str(baseline_output),
             ],
@@ -2100,7 +2404,7 @@ def run_external_holdout(
                 "--seed",
                 str(seed),
                 "--cases",
-                "4",
+                str(policy.cases),
                 "--output",
                 str(candidate_output),
             ],
@@ -2130,46 +2434,20 @@ def run_external_holdout(
         return report
     baseline = json.loads(baseline_output.read_text(encoding="utf-8"))
     candidate = json.loads(candidate_output.read_text(encoding="utf-8"))
-    try:
-        baseline_objective_value = baseline["objective"]
-        candidate_objective_value = candidate["objective"]
-    except (KeyError, TypeError) as error:
-        raise PipelineError(f"holdout artifact has invalid shape: {error}") from error
-    baseline_objective = finite_number(
-        baseline_objective_value, "baseline holdout objective", minimum=0.0
-    )
-    candidate_objective = finite_number(
-        candidate_objective_value, "candidate holdout objective", minimum=0.0
-    )
-    baseline_safety = baseline.get("passed")
-    candidate_safety = candidate.get("passed")
-    if not isinstance(baseline_safety, bool) or not isinstance(candidate_safety, bool):
-        raise PipelineError("holdout passed fields must be booleans")
-    # The randomized holdout is a non-regression gate.  The public benchmark
-    # supplies the improvement requirement; the post-hoc cases prevent a
-    # narrowly overfit improvement from being promoted.
-    relative_change = (candidate_objective - baseline_objective) / max(
-        abs(baseline_objective), 1e-12
-    )
+    paired = compare_paired_holdout(baseline, candidate, policy, seed=seed)
     report = {
-        "passed": bool(
-            baseline_safety is True
-            and candidate_safety is True
-            and relative_change <= 0.02
-        ),
+        **paired,
         "seed": seed,
-        "baseline_objective": baseline_objective,
-        "candidate_objective": candidate_objective,
-        "relative_change": relative_change,
         "candidate_artifact": str(candidate_output.relative_to(worktree)),
         "candidate_sha256": sha256_file(candidate_output),
         "baseline_artifact": str(baseline_output.relative_to(worktree)),
         "baseline_sha256": sha256_file(baseline_output),
-        "baseline_safety_passed": baseline_safety,
-        "candidate_safety_passed": candidate_safety,
         "baseline_returncode": baseline_run.returncode,
         "candidate_returncode": candidate_run.returncode,
-        "tolerance": "candidate objective may regress by at most 2% on randomized holdout",
+        "tolerance": (
+            "paired randomized holdout requires measurable effect, no case above the "
+            "preregistered regression bound, and aggregate non-regression"
+        ),
     }
     ledger.append("holdout.completed", report)
     return report
@@ -2216,10 +2494,7 @@ def dry_run_plan(
                 "external_holdout": {
                     "evaluator": "scripts/autonomy/holdout_evaluator.py",
                     "seed_timing": "generated after the Codex run",
-                    "policy": (
-                        "candidate safety must pass and randomized objective may regress "
-                        "by at most 2% versus root baseline"
-                    ),
+                    "policy": hypothesis.holdout_policy.to_json(),
                 },
             }
         )

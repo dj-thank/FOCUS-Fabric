@@ -617,6 +617,99 @@ def test_holdout_rejects_failed_runs_and_removes_stale_artifacts(
     assert not (evidence_dir / "holdout-candidate.json").exists()
 
 
+def paired_holdout_payload(
+    objectives: list[float], *, seed: int = 17, passed: bool = True
+) -> dict[str, object]:
+    active_ratio = 0.1
+    details = [
+        {
+            "case": index,
+            "seed": (seed + 104729 * index) % (2**31 - 1),
+            "fabric_nmse": objective - 0.04 * active_ratio,
+            "active_ratio": active_ratio,
+            "objective": objective,
+        }
+        for index, objective in enumerate(objectives)
+    ]
+    return {
+        "schema_version": 2,
+        "seed": seed,
+        "cases": len(details),
+        "objective": sum(objectives) / len(objectives),
+        "passed": passed,
+        "details": details,
+    }
+
+
+def test_paired_holdout_rejects_an_insensitive_candidate() -> None:
+    runner = load_runner()
+    policy = runner.HoldoutPolicy(cases=2)
+    baseline = paired_holdout_payload([0.0064, 0.0066])
+    candidate = paired_holdout_payload([0.0064000004, 0.0066000004])
+
+    report = runner.compare_paired_holdout(baseline, candidate, policy, seed=17)
+
+    assert report["passed"] is False
+    assert report["effect_detected"] is False
+    assert report["changed_cases"] == 0
+    assert "insensitive" in report["rejection_reasons"]
+
+
+def test_holdout_policy_requires_a_positive_effect_floor() -> None:
+    runner = load_runner()
+
+    with pytest.raises(runner.PipelineError, match="must be positive"):
+        runner.HoldoutPolicy(min_effect_absolute=0.0, min_effect_relative=0.0)
+
+
+def test_paired_holdout_accepts_a_measurable_safe_effect() -> None:
+    runner = load_runner()
+    policy = runner.HoldoutPolicy(cases=2)
+    baseline = paired_holdout_payload([0.0064, 0.0066])
+    candidate = paired_holdout_payload([0.0062, 0.0064])
+
+    report = runner.compare_paired_holdout(baseline, candidate, policy, seed=17)
+
+    assert report["passed"] is True
+    assert report["effect_detected"] is True
+    assert report["changed_cases"] == 2
+    assert report["max_case_relative_change"] < 0.0
+
+
+def test_paired_holdout_rejects_a_case_regression_hidden_by_the_mean() -> None:
+    runner = load_runner()
+    policy = runner.HoldoutPolicy(cases=2, max_case_regression=0.02)
+    baseline = paired_holdout_payload([0.1, 0.1])
+    candidate = paired_holdout_payload([0.08, 0.103])
+
+    report = runner.compare_paired_holdout(baseline, candidate, policy, seed=17)
+
+    assert report["aggregate_relative_change"] < 0.0
+    assert report["max_case_relative_change"] == pytest.approx(0.03)
+    assert report["passed"] is False
+    assert "case_regression" in report["rejection_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda payload: payload.update(seed=18), "seed"),
+        (lambda payload: payload.update(schema_version=1), "schema_version"),
+        (lambda payload: payload["details"].pop(), "details"),
+        (lambda payload: payload["details"][1].update(seed=999), "seed mismatch"),
+    ],
+)
+def test_paired_holdout_rejects_malformed_pairing(mutation, message: str) -> None:
+    runner = load_runner()
+    policy = runner.HoldoutPolicy(cases=2)
+    baseline = paired_holdout_payload([0.0064, 0.0066])
+    candidate = paired_holdout_payload([0.0062, 0.0064])
+    mutation(candidate)
+
+    with pytest.raises(runner.PipelineError, match=message):
+        runner.compare_paired_holdout(baseline, candidate, policy, seed=17)
+
+
 def test_public_orchestrator_result_omits_host_paths_and_actual_merge_state(
     tmp_path: Path,
 ) -> None:
@@ -940,6 +1033,7 @@ def test_experiment_contract_locks_preregistered_fields(tmp_path: Path) -> None:
     payload = runner.experiment_contract_for(hypothesis, "abc123")
     contract_path.write_text(json.dumps(payload), encoding="utf-8")
 
+    assert payload["holdout_policy"] == runner.HoldoutPolicy().to_json()
     assert runner.validate_experiment_contract(tmp_path, hypothesis, "abc123") == payload
 
     payload["controls"] = ["easier control"]

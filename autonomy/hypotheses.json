@@ -9,7 +9,15 @@
       "controls": ["committed FOCUS-Fabric baseline under the identical benchmark configuration"],
       "primary_metric": "synthetic.in_distribution.output_nmse",
       "evaluator": "fabric_benchmark_v1",
-      "disconfirming_condition": "No >=5% objective improvement at matched active bytes, or any token-agreement regression.",
+      "disconfirming_condition": "No >=5% objective improvement at matched active bytes, any token-agreement regression, any paired holdout case above the 2% regression bound, or no measurable effect in the post-hoc holdout.",
+      "holdout_policy": {
+        "cases": 4,
+        "max_aggregate_regression": 0.02,
+        "max_case_regression": 0.02,
+        "min_effect_absolute": 1e-8,
+        "min_effect_relative": 1e-6,
+        "min_effect_cases": 1
+      },
       "allowed_files": ["src/focus_fabric/codecs.py", "src/focus_fabric/controller.py", "tests/"]
     },
     {
