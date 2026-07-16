@@ -259,6 +259,16 @@ def native_sandbox_overrides(platform_name: str) -> list[str]:
     return []
 
 
+def resolved_repository_child(root: Path, path: Path, *, label: str) -> Path:
+    """Resolve a path and reject links or junctions that escape the repository."""
+
+    resolved_root = root.resolve()
+    resolved_path = path.resolve()
+    if resolved_path == resolved_root or not resolved_path.is_relative_to(resolved_root):
+        raise PipelineError(f"{label} resolves outside repository: {resolved_path}")
+    return resolved_path
+
+
 def build_codex_exec_command(
     runtime: CodexRuntime,
     *,
@@ -377,11 +387,25 @@ def probe_codex_workspace_write(
     if platform_name != "nt":
         return True, "native Windows workspace-write probe not required"
 
-    state_root = (root / "autonomy" / "state").resolve()
+    state_path = root / "autonomy" / "state"
+    state_root = resolved_repository_child(
+        root,
+        state_path,
+        label="sandbox state directory",
+    )
     state_root.mkdir(parents=True, exist_ok=True)
-    probe_root = (state_root / f"preflight-sandbox-{secrets.token_hex(8)}").resolve()
+    state_root = resolved_repository_child(
+        root,
+        state_path,
+        label="sandbox state directory",
+    )
+    probe_root = resolved_repository_child(
+        root,
+        state_root / f"preflight-sandbox-{secrets.token_hex(8)}",
+        label="sandbox probe directory",
+    )
     if not probe_root.is_relative_to(state_root):
-        raise PipelineError(f"unsafe sandbox probe path: {probe_root}")
+        raise PipelineError(f"sandbox probe directory escaped state root: {probe_root}")
     probe_root.mkdir(parents=False, exist_ok=False)
     sentinel = probe_root / "workspace-write.ok"
     command = [
@@ -419,12 +443,27 @@ def probe_codex_workspace_write(
             return False, "native sandbox created an invalid workspace-write sentinel"
         return True, "workspace-write sentinel created"
     finally:
-        if (
-            probe_root.exists()
-            and probe_root.is_relative_to(state_root)
-            and probe_root.name.startswith("preflight-sandbox-")
-        ):
-            shutil.rmtree(probe_root)
+        if os.path.lexists(probe_root):
+            cleanup_root = resolved_repository_child(
+                root,
+                probe_root,
+                label="sandbox probe cleanup directory",
+            )
+            cleanup_state_root = resolved_repository_child(
+                root,
+                state_path,
+                label="sandbox state cleanup directory",
+            )
+            is_junction = getattr(os.path, "isjunction", lambda _: False)
+            if (
+                cleanup_root != probe_root
+                or not cleanup_root.is_relative_to(cleanup_state_root)
+                or not cleanup_root.name.startswith("preflight-sandbox-")
+                or probe_root.is_symlink()
+                or is_junction(probe_root)
+            ):
+                raise PipelineError(f"unsafe sandbox probe cleanup path: {probe_root}")
+            shutil.rmtree(cleanup_root)
 
 
 def load_hypotheses(path: Path) -> tuple[dict[str, Any], list[Hypothesis]]:

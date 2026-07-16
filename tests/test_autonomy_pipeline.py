@@ -172,6 +172,23 @@ def test_windows_workspace_write_probe_accepts_a_sandbox_created_sentinel(
 
     assert ready is True
     assert detail == "workspace-write sentinel created"
+    state_root = tmp_path / "autonomy" / "state"
+    assert list(state_root.glob("preflight-sandbox-*")) == []
+
+
+def test_resolved_repository_child_rejects_an_external_target(tmp_path: Path) -> None:
+    runner = load_runner()
+    repository = tmp_path / "repository"
+    external = tmp_path / "external"
+    repository.mkdir()
+    external.mkdir()
+
+    with pytest.raises(runner.PipelineError, match="outside repository"):
+        runner.resolved_repository_child(
+            repository,
+            external,
+            label="sandbox state directory",
+        )
 
 
 def test_gate_commands_are_pinned_to_current_python(monkeypatch, tmp_path: Path) -> None:
