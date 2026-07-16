@@ -201,7 +201,7 @@ compressed-prefix student are optimized jointly:
 +\lambda_r E_{\text{route-distance}}.
 \]
 
-The supplied function backpropagates through the legacy differentiable FOCUS
+The supplied function backpropagates through the differentiable FOCUS-Native
 path. The archived checkpoint predates the complete heterogeneous controller,
 so no claim is made that it was trained with this full objective.
 
@@ -287,8 +287,8 @@ response; the failed value is documented but excluded from accepted claims.
 ### 10.3 Learned checkpoint traces
 
 On actual Q/K/V projections from the repaired symbolic checkpoint, layer 0
-future-trace NMSE is 1.61037e-04 for Fabric and 3.44849e-04 for legacy learned
-FOCUS. At layer 3, legacy FOCUS is better unguarded: 2.18333e-05 versus
+future-trace NMSE is 1.61037e-04 for Fabric and 3.44849e-04 for the FOCUS-Native
+operator. At layer 3, the FOCUS-Native operator is better unguarded: 2.18333e-05 versus
 1.39396e-04. This counterexample is retained because the portfolio is not
 expected to dominate every local field. Exact guarding reduces layer-3 Fabric
 error at the cost of archive reads.

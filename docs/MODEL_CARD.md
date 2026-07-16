@@ -39,7 +39,7 @@ A deterministic compatibility byte tokenizer is supplied to keep APIs complete. 
 - head dimension: 32;
 - feed-forward width: 384;
 - maximum configured sequence length: 2,048;
-- legacy FOCUS patches/rank: 4/8.
+- FOCUS-Native patches/rank: 4/8.
 
 ## Current measured use
 

@@ -37,6 +37,6 @@ A stronger release title such as “production-ready,” “faster,” “nearly
 - The CPU reference path is slower than vectorized exact attention.
 - Split-conformal coverage degrades under distribution shift.
 - A randomized holdout exposed catastrophic single-seed K-means instability; the compiler was redesigned with query-aware multi-start selection.
-- On one learned layer, the legacy operator has lower unguarded NMSE than the selected Fabric codec; the portfolio is not universally dominant.
+- On one learned layer, the FOCUS-Native operator has lower unguarded NMSE than the selected Fabric codec; the portfolio is not universally dominant.
 - The public reversible hierarchy retains an O(N) exact cold source of truth.
-- The original symbolic tokenizer for the archived checkpoint was not present in the predecessor export.
+- The original symbolic tokenizer for the archived checkpoint was not present in the earlier FOCUS-Native export.

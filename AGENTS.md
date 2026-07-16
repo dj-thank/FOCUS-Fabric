@@ -49,7 +49,7 @@ Every Codex session and subagent must follow these rules.
 
 - `src/focus_fabric/`: heterogeneous memory, certificates, semantic memory,
   verified decoding, and model integration.
-- `src/focus_native/`: repaired legacy mechanism demonstrator.
+- `src/focus_native/`: reconstructed FOCUS-Native mechanism demonstrator.
 - `scripts/benchmark_fabric.py`: CPU evidence suite.
 - `scripts/autonomy/`: Codex orchestration, gates, drift and claim auditing.
 - `autonomy/hypotheses.json`: machine-readable research backlog.
