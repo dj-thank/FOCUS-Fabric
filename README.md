@@ -1,5 +1,8 @@
 # FOCUS-Fabric 2026.07 / v0.2.1
 
+> **公開版:** [`v0.2.1 — Unsigned Research Preview`](https://github.com/dj-thank/FOCUS-Fabric/releases/tag/v0.2.1)
+> 固定ソース: [`069351b`](https://github.com/dj-thank/FOCUS-Fabric/commit/069351b0a586487961f3d7c54fb3c94bb70c32cc) / 完全なハッシュ一覧はRelease添付の`ARTIFACT_SHA256SUMS`を参照してください。
+
 **古いKVを「残す／捨てる」だけでなく、「将来のqueryへどう応答するか」に変換する。**
 
 FOCUS-Fabricは、書き込みを終えたKV pageを一種類の方式で一律に圧縮しません。**FOCUS-Native由来の解析的局所attention応答作用素**（以下、**FOCUS-Native作用素**）を含む複数の表現をpage/headごとに実測比較し、選ばれた小さなactive stateでattentionへ応答します。校正済みの誤差上限が閾値を超える、またはcodec出力が無効な場合は、保存してある正確なKV原本へfallbackします。
