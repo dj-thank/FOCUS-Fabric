@@ -3,137 +3,49 @@
 > **公開版:** [`v0.2.1 — Unsigned Research Preview`](https://github.com/dj-thank/FOCUS-Fabric/releases/tag/v0.2.1)
 > 固定ソース: [`069351b`](https://github.com/dj-thank/FOCUS-Fabric/commit/069351b0a586487961f3d7c54fb3c94bb70c32cc) / 完全なハッシュ一覧はRelease添付の`ARTIFACT_SHA256SUMS`を参照してください。
 
-**古いKVを「残す／捨てる」だけでなく、「将来のqueryへどう応答するか」に変換する。**
+## AIの「長い記憶」を、もっと扱いやすくする研究
 
-FOCUS-Fabricは、書き込みを終えたKV pageを一種類の方式で一律に圧縮しません。**FOCUS-Native由来の解析的局所attention応答作用素**（以下、**FOCUS-Native作用素**）を含む複数の表現をpage/headごとに実測比較し、選ばれた小さなactive stateでattentionへ応答します。校正済みの誤差上限が閾値を超える、またはcodec出力が無効な場合は、保存してある正確なKV原本へfallbackします。
+長い会話や文章を扱うAIは、前に出てきた内容を参照しながら次の答えを作ります。ところが、会話が長くなるほど、参照のために持ち続けるデータも増えていきます。
 
-> **Research preview — 主張の範囲**
->
-> この公開版が実証するのは、controlled synthetic attention field上の数値機構と、再現・監査用の研究基盤です。自然言語能力の向上、公式LongBench/RULER/BABILongスコア、GPU高速化、物理HBM削減、million-token運用はまだ実証しておらず、主張しません。測定済みの文言は[`docs/CLAIMS_LEDGER.json`](docs/CLAIMS_LEDGER.json)に固定されています。
+たとえるなら、何冊もの本を調べるために、すべてのページを机の上へ広げ続けるようなものです。正確ではありますが、机はすぐにいっぱいになります。
 
-## 60秒で分かるFOCUS-Fabric
+**FOCUS-Fabricは、本を捨てるのではなく、まず使いやすい「案内カード」を作る研究です。**
 
-Transformerは過去のtokenを参照するために、**K**（何を参照するか）と**V**（何を取り出すか）をKV cacheへ残します。contextが長くなるほど、この正確なKVをactive memoryへ載せ続ける負担が増えます。
+- 履歴を小さなまとまりに分ける
+- まとまりごとに、何通りかの覚え方を試す
+- 実際のデータで、いちばん合う覚え方を選ぶ
+- 案内カードだけでは危ないときは、正確な原本を見直す
 
-多くのKV eviction方式は、重要なtokenを選んで残します。FOCUS-Native作用素は、別の問いから始まりました。
-
-> **固定されたKV pageを、「将来のqueryに対して、そのpageが何を、どれくらい強く返すか」という小さな応答地図へ変換できないか。**
-
-page $B$ に対するquery $q$ の応答を、概念的に次の二つの組として扱います。
-
-$$
-q \longmapsto \bigl(F_B(q),\; \log Z_B(q)\bigr)
-$$
-
-- $F_B(q)$: そのpageが返すattention value
-- $\log Z_B(q)$: 他のpageと正しい比率で混ぜるためのattention log-mass
-
-FOCUS-Native作用素はquery空間にanchorを置き、その近くで値応答の低ランクな一階変化と、log-massの局所的な曲がりを保存します。つまり、過去のtokenを抜粋するのではなく、**過去のpageがどう答えるかを局所関数としてコンパイルする**方式です。
-
-committed controlled experimentsでは、単一表現が全caseで最良にはなりませんでした。そこでFOCUS-Fabricは、系譜上の中核であるFOCUS-Native作用素を継承しながら、実行時には性質の異なる五つのcodecからpage/headごとに選びます。
-
-## FOCUS-KVからFOCUS-Fabricまで
-
-FOCUS-KV、FOCUS-Native、FOCUS-Fabricは、repository作者の[dj-thank](https://github.com/dj-thank)が継続して開発してきた同一の研究系列です。外部の別プロジェクトを取り込んだという意味ではありません。
+つまり、普段使う机の上は小さく保ちながら、必要なときには本棚の原本へ戻れるようにします。ここでいう原本は元の文章そのものではなく、AIのattention（過去の情報へ重みを付けて参照する計算）に使う正確な中間データです。
 
 ```mermaid
 flowchart LR
-    A["FOCUS-KV<br/>KV pageを応答関数として捉える"] --> B["FOCUS-Native<br/>FOCUS-Native作用素・階層cache・逐次生成"]
-    B --> C["FOCUS-Fabric<br/>異種codec選択・校正・exact fallback"]
+    A["長い会話や文章"] --> B["履歴を<br/>小さなまとまりに分ける"]
+    B --> C["何通りかの<br/>覚え方を比べる"]
+    C --> D{"今回の質問に<br/>要約で答えられる？"}
+    D -- "はい" --> E["小さな要約を使う"]
+    D -- "いいえ" --> F["正確な原本を見直す"]
 ```
 
-| 世代 | 進めたこと | この公開treeで確認できるもの |
-|---|---|---|
-| **FOCUS-KV** | 古いKV領域を、query-conditionedな応答関数として扱う原型 | 独立した`focus_kv` packageはなく、作者提供の開発系譜として記録 |
-| **FOCUS-Native** | FOCUS-Native作用素をmodel、training objective、階層cache、逐次生成へ組み込む探索 | 修復された機構を[`src/focus_native/`](src/focus_native/)に収録 |
-| **FOCUS-Fabric** | 一種類の作用素へ固定せず、異種codecの選択、校正、exact fallback、evidence gateへ一般化 | 現在の監査対象実装を[`src/focus_fabric/`](src/focus_fabric/)に収録 |
+## これは何で、何ではないのか
 
-この説明は作者性と技術系譜を示すもので、公開優先日や「世界初」を主張するものではありません。FOCUS-Native作用素の具体的な特徴と一次研究との境界は、[FOCUS lineage and prior-art boundary](docs/FOCUS_LINEAGE.md)にまとめています。
+FOCUS-Fabricは、AIモデルそのものではありません。AIが過去を参照するときに使う**記憶部分の扱い方**を調べる、Python製の研究基盤です。
 
-## 1 pageがactive memoryになるまで
+現在の公開版で確認できるのは、人工的に設計したattentionのテスト上で、複数の要約方法を選び、安全に原本へ戻る仕組みが動くことです。
 
-```mermaid
-flowchart LR
-    A["Incoming tokens<br/>exact hot KV"] --> B{"pageが満杯か"}
-    B -- "no" --> A
-    B -- "yes" --> C["正確なpageから<br/>五つのcodec候補をfit"]
-    C --> D["未使用query traceで比較<br/>error / bytes / estimated compute"]
-    D --> E["page/headごとに<br/>active表現を一つ選択"]
-    E --> F{"codec出力が有効で<br/>certificateが受理するか"}
-    F -- "yes" --> G["近似summary<br/>value + log-mass"]
-    F -- "no" --> H["cold archiveから<br/>sparse exact fallback"]
-    G --> I["hot KV・他pageと<br/>log-spaceで合成"]
-    H --> I
-```
+一方、次のことはまだ実証していません。
 
-### 五つの表現を、同じ契約で比較する
+- ChatGPTのようなAIの回答が賢くなること
+- 実際の長文読解ベンチマークで高得点を取ること
+- GPUで高速に動くことや、物理メモリ全体が大幅に減ること
+- 100万token（文章を分けた小さな単位）級の長時間運用に耐えること
+- どんな状況でも、単一の方法より必ず優れること
 
-| Codec family | 何を小さく保存するか | 得意になり得る構造 |
-|---|---|---|
-| **FOCUS-Native作用素** (`OperatorCodec`) | anchorでの応答、低ランクJacobian、log-massの勾配・縮約Hessian | queryに対する応答が局所的に滑らかなpage |
-| **Weighted KV coreset** | query traceに合わせた少数の代表KV | 少数の代表tokenで応答を保てるpage |
-| **Gaussian/cumulant state** | key群のclusterと局所統計 | 分布的な要約が効くpage |
-| **Projected moment state** | merge可能な低次元moment | 低次元の統計構造を持つpage |
-| **Exact-residual hybrid** | smoothな背景近似と少数のexact KV | 大部分は滑らかだが鋭い例外を持つpage |
+このため、公開版は**製品版ではなく、署名なしの研究プレビュー**として提供しています。
 
-codec名だけで適性を決めることはしません。観測queryを**fit 40% / selection 30% / calibration 30%**へ分離し、selection split上の誤差・active bytes・推定computeで候補を比較します。選択後のcodecだけを未使用のcalibration splitで校正します。
+## 5分で試す
 
-### 近似pageを、共通のsoftmaxへ合成する
-
-すべてのcodecは `(value output, log-mass)` を返します。互いに素なpageの結果はlog-sum-expで合成できるため、FOCUS-Native作用素、他の近似page、hot KV、fallbackしたexact pageを同じsoftmaxの下へ戻せます。**合成則は正確ですが、各codecのsummary自体は近似です。**
-
-校正済みの誤差上限が閾値を超える、またはcodec出力が無効なpage/headは、cold archive（正確なKV原本）で評価します。また、階層mergeでは近似済みsummaryを再圧縮せず、cold archiveから親pageを再compileします。このarchiveは正確性のsource of truthであり、active-stateの圧縮率には含めません。
-
-## 測定結果 — 数字より先に、範囲を読む
-
-以下は、異なるattention patternを混ぜた**controlled synthetic field**をCPUで評価したcommitted artifactです。自然言語benchmarkでも、速度benchmarkでもありません。
-
-![Controlled heterogeneous attention benchmark. Lower output NMSE is better; the vertical axis is logarithmic.](results/fabric_benchmark.png)
-
-*縦軸はlog scaleで、低いほど良い結果です。Raw data: [`results/fabric_benchmark.json`](results/fabric_benchmark.json).*
-
-### Controlled heterogeneous attention field
-
-| Claim | Metric | Committed result |
-|---|---|---:|
-| C001 | Controlled exact KV | 98,304 bytes |
-| C002 | Fabric active state — exact cold archiveを除く | 8,584 bytes |
-| C003 | Active-state compression — exact cold archiveを除く | **11.452x** |
-| C004 | In-distribution Fabric output NMSE | **5.11794e-5** |
-| C005 | Memory-matched operator output NMSE | 0.0877658 |
-| C006 | Query-aware memory-matched coreset output NMSE | 0.000440168 |
-| C007 | In-distribution empirical marginal coverage — target 0.95 | 0.96875 |
-| C008 | Shifted empirical marginal coverage | 0.807292 |
-| C009 | Shift fallback rate | 0.255208 |
-
-このcaseでFabricは複数種類のcodecを実際に選択し、名前付きのmemory-matched operator-only / coreset-only baselineより低いin-distribution output NMSEを示しました。一方、分布shiftではcoverageがnominal targetを下回り、exact fallbackが増えています。
-
-> **重要な範囲限定**
->
-> 11.452xは**active representation**だけのcompressionです。公開referenceは別にO(N)のexact cold archiveを保持するため、総保存量が11分の1になったという結果ではありません。
-
-### 失敗を消さず、設計へ戻した
-
-最初のcompilerには、K-meansの一つの初期値へ依存する不安定性がありました。実装後に生成したholdout seedがその失敗を露出したため、結果を除外せず、query-aware multi-start selectionへ設計を変更しました。
-
-修正後のretained randomized suiteは、**three seeds / 11 controlled cases**を含みます（C026–C030）。全3 runが宣言済みsafety conditionを通過し、worst run-level Fabric-to-best-single-family NMSE ratioは**0.0988026**、forced exact fallbackの最大絶対誤差は**0**、invalid codec outputは**0**でした。Raw data: [`results/randomized_holdout_suite.json`](results/randomized_holdout_suite.json)。
-
-同時に、learned traceの一つでは**FOCUS-Native作用素**の方がFabricより低い誤差だった反例も保持しています。したがって、このreleaseは「Fabricが常に各単一方式へ勝つ」とは主張しません。その反例があるからこそ、FOCUS-Native作用素を異種codec群の有効な選択肢の一つとして残しています。
-
-### その他の検証済みevidence
-
-| Claims | Area | What was measured | What it does not establish |
-|---|---|---|---|
-| C010–C011 | Repeated compaction | Maximum relative attention error 0.0289224、invalid codec output 0 | Million-token stability |
-| C012–C013 | Symbolic mechanism checkpoint | Teacher-forced argmax agreement 1.0 over 64 tokens、free-running token agreement 1.0 over 8 tokens | Natural-language ability; public weights are excluded because provenance is incomplete |
-| C019–C021 | Typed semantic ledger | Protected-record retention 1.0、hash-chain verification 1.0、poison prose policy-promotion 0.0 in the committed substrate benchmark | Factual truth、cryptographic identity、general prompt-injection resistance |
-| C022–C025 | GPU and official tasks | GPU status is `not_executed`; LongBench、RULER、BABILong fields are `null` | GPU speedup or official long-context quality |
-
-数値とartifact digestを結ぶ公開可能な文言は[`docs/CLAIMS_LEDGER.json`](docs/CLAIMS_LEDGER.json)、意味と非主張は[`docs/CLAIMS.md`](docs/CLAIMS.md)にあります。
-
-## 5分で動かす
-
-必要環境はGitとPython 3.10以上です。最小例はCPUだけで実行できます。
+必要なのはGitとPython 3.10以上です。サンプルはCPUだけで動かせます。
 
 ### Windows PowerShell
 
@@ -156,16 +68,82 @@ python -m pip install -e '.[dev]'
 python examples/minimal_fabric.py
 ```
 
-この例は64 tokenをstreamし、最後のattention output shapeと次のreportを表示します。
+サンプルを実行すると、64個の小さな入力を順番に追加し、次のような情報を表示します。
 
-| Output field | 読み方 |
+- いくつの入力を記憶へ追加したか
+- 実行中の小さな要約が、元データに比べてどのくらいの大きさか
+- 要約を信用せず、正確な原本へ戻った割合
+
+これは大規模言語モデルのデモではなく、記憶の仕組みだけを確かめる最小例です。
+
+## 研究で分かったこと
+
+以下は、性質の違う注意パターンを混ぜた**人工的なCPUテスト**の結果です。自然言語の能力や実運用速度を測った結果ではありません。
+
+![FOCUS-Fabricの人工的な注意計算テスト。縦軸は誤差で、低いほど良い結果です。](results/fabric_benchmark.png)
+
+このテストから、少なくとも次のことが分かりました。
+
+| 確認できたこと | 一般的な読み方 |
 |---|---|
-| `tokens` | layerへ追加したtoken数 |
-| `page_levels` | binary-counter型のactive page階層 |
-| `active_compression` | compiled active stateに対するexact active KVのbyte比（exact / active）。cold archiveは除く |
-| `fallback_rate` | page/headの評価判断のうち、exact KVへ戻った割合 |
+| 制御実験で使った、圧縮前の正確なKV全体98,304 bytesに対し、選ばれた要約は8,584 bytes | **実行中に使う要約部分**は約11.45分の1（11.452倍の圧縮率）になった |
+| 似た条件では、目標0.95に対して0.96875のカバー率 | カバー率は「誤差判定が想定どおり収まった問い合わせの割合」。想定した条件では、おおむね目標どおり働いた |
+| 条件を変えるとカバー率は0.807292へ低下し、0.255208の割合で原本へ戻った | 苦手な状況では精度が落ち、安全のため約4回に1回は原本を使った |
+| ある学習済みデータでは、FOCUS-Nativeの方法がFabricより良かった | Fabricがいつでも最良だとは言えない |
 
-中心となるAPIは、tokenごとにquery/key/valueを追加しながらattention outputを得る形です。
+### 数字を読むときの大切な注意
+
+**11.452倍という値は、机の上で使う要約部分だけの比較です。**
+
+現在の公開実装は、間違いが疑われるときに戻れるよう、正確な原本を別に保存します。そのため、保存量全体が11.452分の1になったという意味ではありません。原本を残すコストは、現在の大きな制約の一つです。
+
+また、開発中に見つかった失敗や不利な結果も削除していません。条件が変わると安全判定が弱くなることや、単独の方法が勝つ例を残し、それを次の設計変更へ使っています。
+
+正確な測定値、比較対象、実験条件は[Claims and non-claims](docs/CLAIMS.md)と[`docs/CLAIMS_LEDGER.json`](docs/CLAIMS_LEDGER.json)で確認できます。元データは[`results/fabric_benchmark.json`](results/fabric_benchmark.json)と[`results/randomized_holdout_suite.json`](results/randomized_holdout_suite.json)です。
+
+## FOCUS-KV、FOCUS-Native、FOCUS-Fabricの関係
+
+この三つは、外部の別プロジェクトを組み合わせたものではありません。すべて[dj-thank](https://github.com/dj-thank)が継続して開発してきた、同じ研究の流れです。
+
+```mermaid
+flowchart LR
+    A["FOCUS-KV<br/>過去を『答え方』として覚える発想"] --> B["FOCUS-Native<br/>その発想を動く仕組みにする"]
+    B --> C["FOCUS-Fabric<br/>複数の覚え方と安全策へ広げる"]
+```
+
+- **FOCUS-KV** — 過去の情報を、単に残すか捨てるかではなく、「次の質問へどう答えるか」という形で覚える原型
+- **FOCUS-Native** — その発想を、実際に計算できる記憶の仕組みへした段階
+- **FOCUS-Fabric** — 一つの覚え方へ固定せず、複数の方法を比べ、危ないときは原本へ戻れるようにした現在の研究基盤
+
+この説明は作者と技術の系譜を示すもので、「世界初」や公開優先日を主張するものではありません。詳しくは[FOCUS lineage and prior-art boundary](docs/FOCUS_LINEAGE.md)を参照してください。
+
+<details>
+<summary><strong>もう少し技術的に知りたい方へ</strong></summary>
+
+### 用語を日常語に置き換えると
+
+| 技術用語 | このREADMEでの意味 |
+|---|---|
+| KV cache | AIが過去の入力を参照するために保持する中間データ |
+| page | 履歴を区切った一つのまとまり |
+| query | いま行おうとしている問い合わせ |
+| codec | pageを小さく覚えるための要約方式 |
+| active state | 実行中に机の上へ置く小さな要約 |
+| exact cold archive | 必要なときに見直す正確な原本 |
+| fallback | 要約を使わず、正確な原本へ戻ること |
+
+技術文書では、中心となる仕組みを**FOCUS-Native由来の解析的局所attention応答作用素**（**FOCUS-Native作用素**）と呼びます。過去のtokenを抜き出して残すのではなく、固定された履歴のまとまりを「次の問い合わせへ何を、どのくらい強く返すか」という小さな応答地図に変換します。
+
+FOCUS-Fabricは、この方式を含む五種類の要約候補をpageとattentionの計算単位ごとに比較します。候補を作るデータ、選ぶデータ、誤差を確認するデータを分け、選ばれた方式だけを最後の未使用データで調整します。要約の出力が無効な場合や、その未使用データから決めた誤差上限を超えた場合は、正確な原本へ戻ります。
+
+各方式の数式、選択規則、合成方法は[Architecture](docs/ARCHITECTURE.md)と[Evaluation contract](docs/EVALUATION.md)にあります。
+
+</details>
+
+<details>
+<summary><strong>開発者向け: 最小APIと検証コマンド</strong></summary>
+
+中心APIは、入力ごとにquery/key/valueを追加しながらattentionの出力を得る形です。
 
 ```python
 layer = MemoryFabricLayer.create(config)
@@ -176,27 +154,16 @@ for query, key, value in token_stream:
 report = layer.report()
 ```
 
-importと完全な設定を含む例は[`examples/minimal_fabric.py`](examples/minimal_fabric.py)、typed agent memoryの例は[`examples/typed_agent_memory.py`](examples/typed_agent_memory.py)を参照してください。
+完全なimportと設定は[`examples/minimal_fabric.py`](examples/minimal_fabric.py)、agent memoryの例は[`examples/typed_agent_memory.py`](examples/typed_agent_memory.py)にあります。
 
-## このrepositoryに含まれる範囲
-
-| 層 | 役割 | 位置づけ |
-|---|---|---|
-| Numerical memory core | Heterogeneous codec、compiler、hierarchy、certificate、fallback | FOCUS-Fabricの中心 |
-| Optional integrity layer | Typed semantic ledger、extractive capsule、verified greedy decode | agentや生成経路向けの追加機構 |
-| Research harness | Randomized holdout、claim ledger、drift gate、Codex worktree orchestration | 実験と公開主張を監査する基盤 |
-
-三層は同じrepositoryで検証できますが、すべてを一つのproduction runtimeとして完成させたという意味ではありません。
-
-## 検証gateとevidenceを再現する
-
-通常の検証gateは、Linux/macOSでは次の一行です。
+Linux / macOSの通常検証:
 
 ```bash
 make gate
+make package-check
 ```
 
-Windowsではeditable install後に同じ四工程を個別実行します。
+Windows PowerShellの同等検証:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -204,69 +171,48 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe scripts\autonomy\validate_claims.py
 .\.venv\Scripts\python.exe scripts\autonomy\detect_drift.py
+.\.venv\Scripts\python.exe scripts\release\build_distributions.py --output-dir dist --replace
 ```
 
-公開用のwheelとsdistは、通常のtestとは別にarchive内部まで検査します。
+公開用ビルダーはcleanなGit commitだけを隔離して使い、危険なarchive path、link、version不一致、package欠落、公開対象外のmodel weightがあれば失敗します。Codexを使う自律研究ループの安全境界は[Codex autonomous operation](docs/CODEX_AUTONOMY.md)に分離しています。
 
-```bash
-make package-check
-```
+</details>
 
-このgateはcleanなGit `HEAD`だけを隔離した作業領域へexportして再buildし、path traversal、artifact symlink、archive内link、version不一致、package本体の欠落に加え、公開対象外の`.safetensors` / `.pt` / `.pth` / `.ckpt` / `.bin` / `.onnx`が一つでも入れば失敗します。wheelはsource tree外の一時targetへinstallしてimportし、source ZIPも同じsuffix policyで生成後に再検査します。`0.2.0`の公開前sdist候補は、この検査を遡って適用した結果checkpoint weight混入が判明したため、公開せず`0.2.1`へ置き換えています。
+## 現在の主な限界
 
-Linux/macOSでは、次のtargetがcommitted evidence artifactを再生成します。
+- 正確な原本を残すため、保存量全体は履歴とともに増えます。
+- 現在のPython CPU実装は、速度を競う完成品ではありません。
+- GPUでの正しさ、速度、物理メモリ帯域はまだ測定していません。
+- LongBench、RULER、BABILong、LifeBenchなどの公式評価はまだ実行していません。
+- 条件が変わると誤差判定の信頼性が下がり、原本へ戻る回数が増えます。
+- 「正確な原本へ戻れる」のは、その原本を別に保持し、利用できる場合だけです。要約だけから元の情報を完全に復元する仕組みではありません。
+- この研究だけで、データのプライバシー、機密性、アクセス権限の安全性が保証されるわけではありません。
+- 公開しているテスト結果だけで、自然言語能力や一般的な安全性は証明できません。
+- 自律研究ループが動くことと、その生成コードを採用・公開して安全であることは別です。現在の仕組みは、効果を測れない候補を拒否しますが、自律公開の安全性までは証明しません。
 
-```bash
-make benchmark
-make agent-memory
-make holdout
-make gpu-benchmark
-make autonomy-dry-run
-```
+詳しくは[Weakness audit](docs/WEAKNESS_AUDIT.md)と[Limitations](docs/LIMITATIONS.md)を参照してください。
 
-これらは`results/`のtracked artifactを上書きします。環境情報や浮動小数点差も記録されるため、clean branchで実行し、`git diff`を確認してください。Windowsでの個別commandと評価条件は[Evaluation contract](docs/EVALUATION.md)にあります。
+## もっと詳しく読む
 
-認証済みの現行Codex CLIを使い、H001をisolated worktreeで実行する場合:
+### まず読む文書
 
-```powershell
-.\scripts\autonomy\run_cycle.cmd --mode preflight --hypothesis H001-forward-influence-routing
-.\scripts\autonomy\run_cycle.cmd --mode execute --hypothesis H001-forward-influence-routing
-```
+- [FOCUS lineage and prior-art boundary](docs/FOCUS_LINEAGE.md) — 三世代の研究の流れと、関連研究との境界
+- [Claims and non-claims](docs/CLAIMS.md) — 何を確認でき、何をまだ主張できないか
+- [Evaluation contract](docs/EVALUATION.md) — 数字をどの条件で測ったか
+- [Limitations](docs/LIMITATIONS.md) — 現在の制約
 
-既定のexecuteはcandidateをcommitもmergeもしません。inner Codexの既定Pythonをproject venvに、`PYTHONPATH`をcandidate側`src`に固定し、偶発的なglobal Python fallbackやroot実装の誤importをpreflightで防ぎます。H001のcheckpoint評価には、公開対象外のweightを[`checkpoints/README.md`](checkpoints/README.md)記載のpathへ置いたauthorized local copyが必要です。preflightはSHA-256を照合し、weightをworktreeへcopyしません。明示的な別Python起動は技術的に不可能なのではなく規約違反です。automatic promotionは`--auto-promote`を明示した場合だけ有効になり、それでもtests、claim integrity、post-hoc randomized holdout、exactness constraints、H001のprimary-metric contractをすべて通る必要があります。詳しい安全境界は[Codex autonomous operation](docs/CODEX_AUTONOMY.md)を参照してください。
+### 実装・再現・監査
 
-> **自律パイプラインの実運転状態（2026-07-17）**
->
-> Windows上のH001 live cycleは、6役の`gpt-5.6-luna` specialist、candidate/trusted tests、claims、drift、randomized holdoutまで完走しました。version-1 holdout契約では固定benchmarkの改善によりcandidateを`accepted`と判定しましたが、独立reviewで4件のpaired holdoutへの差が最大でも約1.73e-9、測定可能な変化が0件だったと判明しました。candidateはcommit・merge・pushしていません。現在の契約はcase単位のpaired non-regressionとminimum effectを事前登録し、同じcandidateを`insensitive`として拒否します。これは研究ループが「動いた」ことと、生成コードが「採用に値する」ことを分けるためのfail-closed更新です。
+- [Architecture](docs/ARCHITECTURE.md) — 数学的な契約、要約方式、階層、原本への復帰
+- [Paper draft](docs/PAPER_DRAFT.md) — 論文形式の手法と結果
+- [Research synthesis, July 2026](docs/RESEARCH_SYNTHESIS_2026-07.md) — 一次文献と設計判断
+- [Model card](docs/MODEL_CARD.md) — FOCUS-Native機構の位置づけ
+- [Codex autonomous operation](docs/CODEX_AUTONOMY.md) — 隔離した自律実験の流れ
+- [Reproducibility](docs/REPRODUCIBILITY.md) — 環境、成果物、checkpointの扱い
+- [Publication status](docs/PUBLICATION_STATUS.md) — 現在の公開状態
 
-## 現在の限界
+## 作者、引用、ライセンス
 
-- Exact cold archiveはsource of truthとして残るため、total retained storageはO(N)です。
-- Python CPU referenceはvectorized exact attentionより遅く、速度実装ではありません。
-- Triton codeとABIはありますが、このrelease environmentではCUDA/GPU benchmarkを実行していません。
-- LongBench、RULER、BABILong、LifeBench、modern production LLM、million-token runは未実施です。
-- Split-conformal certificateは交換可能性の仮定に依存し、distribution shift下の普遍保証ではありません。
-- Hash chainは改変検知用です。外部の真実性、認証、trusted timestampを保証しません。
-- FOCUS-Native lossは新規training run向けに実装されていますが、archived checkpointが現在のfull objectiveで学習済みだとは主張しません。
-- Autonomous research harnessはcandidate Pythonをhost上で検証するため、敵対的・第三者由来のhypothesisには別VM/containerが必要です。
+FOCUS-KV、FOCUS-Native、FOCUS-Fabricは**[dj-thank](https://github.com/dj-thank)**が作成しました。リリース整備への追加貢献は、FOCUS-Fabric research release contributorsに帰属します。
 
-詳細は[Weakness audit](docs/WEAKNESS_AUDIT.md)と[Limitations](docs/LIMITATIONS.md)を参照してください。
-
-## Documentation map
-
-- [FOCUS lineage and prior-art boundary](docs/FOCUS_LINEAGE.md) — FOCUS-KV／FOCUS-NativeからFabricまでの作者系譜と、既存研究との重なり・境界。
-- [Architecture](docs/ARCHITECTURE.md) — 数学的contract、codec、hierarchy、fallback。
-- [Paper draft](docs/PAPER_DRAFT.md) — publication-style method and evidence draft。
-- [Research synthesis, July 2026](docs/RESEARCH_SYNTHESIS_2026-07.md) — 一次文献と設計判断。
-- [Evaluation contract](docs/EVALUATION.md) — split、metric、baseline、再現条件。
-- [Claims and non-claims](docs/CLAIMS.md) — 公開可能な主張と範囲外。
-- [Model card](docs/MODEL_CARD.md) — archived FOCUS-Native mechanismの位置づけ。
-- [Codex autonomous operation](docs/CODEX_AUTONOMY.md) — isolated experiment workflow。
-- [Reproducibility](docs/REPRODUCIBILITY.md) — environment、artifact、checkpoint handling。
-- [Publication status](docs/PUBLICATION_STATUS.md) — 現在のrelease status。
-
-## Creator, citation, and license
-
-The FOCUS research line and FOCUS-Fabric were created by **[dj-thank](https://github.com/dj-thank)**. Additional release work is credited to the FOCUS-Fabric research release contributors.
-
-引用情報は[`CITATION.cff`](CITATION.cff)にあります。コードとdocumentationはApache-2.0です。historical checkpointのweight binariesは、元のtraining dataとredistribution provenanceが不完全なため公開repositoryから除外しています。詳細は[`checkpoints/README.md`](checkpoints/README.md)を参照してください。
+引用情報は[`CITATION.cff`](CITATION.cff)にあります。コードと文書はApache-2.0です。由来と再配布条件を十分に確認できないhistorical checkpointのweight binariesは、公開リポジトリとReleaseから除外しています。詳しくは[`checkpoints/README.md`](checkpoints/README.md)を参照してください。
