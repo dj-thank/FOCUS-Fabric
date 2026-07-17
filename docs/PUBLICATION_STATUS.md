@@ -2,9 +2,11 @@
 
 ## Decision
 
-**Ready as a `0.2.1` unsigned research-preview candidate; not ready as a production inference engine or superior-LLM claim.**
+**Published as the [`v0.2.1` unsigned research preview](https://github.com/dj-thank/FOCUS-Fabric/releases/tag/v0.2.1); not ready as a production inference engine or superior-LLM claim.**
 
-The `0.2.1` candidate contains an installable package, repaired checkpoint mechanism, heterogeneous memory compiler, online hierarchy, fallback and monitoring controls, semantic agent ledger, verified greedy decoder, FOCUS-Native loss, optional Triton kernel, Hugging Face SDPA trace collector, Codex experiment orchestrator, tests, CI, evidence artifacts, and a machine-verifiable claim ledger. A locally retained pre-publication `0.2.0` sdist candidate was quarantined after archive inspection found excluded `.safetensors` checkpoint payloads. It must not be published. The successor pipeline exports exact clean Git `HEAD` to an isolated build directory, excludes common model-weight suffixes recursively and case-insensitively, and verifies wheel, sdist, clean-target imports, and generated source-ZIP members. Candidate archives are explicitly labeled; final generation fetches canonical GitHub `origin/main` and requires `HEAD` to match the fetched commit. The exact `0.2.1` source commit, manifest, Python-distribution hashes, and source-ZIP checksums are fixed only when the reviewed release assets are built.
+The published `0.2.1` release contains an installable package, repaired checkpoint mechanism, heterogeneous memory compiler, online hierarchy, fallback and monitoring controls, semantic agent ledger, verified greedy decoder, FOCUS-Native loss, optional Triton kernel, Hugging Face SDPA trace collector, Codex experiment orchestrator, tests, CI, evidence artifacts, and a machine-verifiable claim ledger. A locally retained pre-publication `0.2.0` sdist candidate was quarantined after archive inspection found excluded `.safetensors` checkpoint payloads; it was not uploaded. The final pipeline exported exact clean Git commit [`069351b0a586487961f3d7c54fb3c94bb70c32cc`](https://github.com/dj-thank/FOCUS-Fabric/commit/069351b0a586487961f3d7c54fb3c94bb70c32cc), recursively excluded common model-weight suffixes, and verified the wheel, sdist, clean-target import, source ZIP, complete-history bundle, and all external/internal SHA-256 records. All nine attached assets were downloaded again from GitHub and matched the locally verified files byte-for-byte.
+
+The release remains deliberately labeled **unsigned research preview**. Official long-context benchmarks, named-hardware GPU/HBM measurements, external signing, and independent reproduction remain open evidence classes.
 
 ## Evidence classes
 
