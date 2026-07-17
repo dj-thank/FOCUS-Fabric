@@ -37,8 +37,18 @@ Every Codex session and subagent must follow these rules.
   hypothesis record before editing.
 - Delegate independent read-heavy work to specialized subagents.  Avoid
   parallel write-heavy edits to the same files.
+- In autonomous runs, every `spawn_agent` call uses `fork_turns="none"`, an
+  exact role `task_name`, and a self-contained message containing the relevant
+  `.codex/agents/<role>.toml` contract.  Task names and nicknames are not model
+  evidence; only host runtime metadata may satisfy the routing gate.
 - Add or update tests before claiming a mechanism works.
-- Run `make gate` before returning a completion result.
+- Run `make gate` before returning a completion result.  In the Windows
+  autonomous worktree, use the injected `python`/`FOCUS_PYTHON` equivalents
+  supplied by the root prompt when GNU Make is unavailable; never install,
+  uninstall, or mutate the shared project runtime.
+- Treat `FOCUS_CHECKPOINT` as a read-only authorized local input.  Verify its
+  preregistered digest in the outer runner; never copy it into a worktree,
+  commit it, redistribute it, or alter it from candidate code.
 - Put raw measurements under `results/`; do not hand-edit generated metrics.
 - Update `docs/CLAIMS_LEDGER.json` only through
   `scripts/autonomy/validate_claims.py --refresh-digests`.
@@ -49,7 +59,7 @@ Every Codex session and subagent must follow these rules.
 
 - `src/focus_fabric/`: heterogeneous memory, certificates, semantic memory,
   verified decoding, and model integration.
-- `src/focus_native/`: repaired legacy mechanism demonstrator.
+- `src/focus_native/`: reconstructed FOCUS-Native mechanism demonstrator.
 - `scripts/benchmark_fabric.py`: CPU evidence suite.
 - `scripts/autonomy/`: Codex orchestration, gates, drift and claim auditing.
 - `autonomy/hypotheses.json`: machine-readable research backlog.

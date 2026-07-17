@@ -75,17 +75,24 @@ Greedy sequence equality is guaranteed only when the verifier oracle itself is t
 
 ## G. Autonomous Codex operation
 
-- Codex CLI was not installed in this container, so only dry-run planning—not a live autonomous code mutation—can be executed here.
+- A live Windows H001 cycle completed six verified `gpt-5.6-luna` specialist roles and all then-declared gates. This proves the local control path can execute; it does not prove the generated candidate is scientifically useful or safe to publish.
+- The version-1 decision marked the candidate accepted on the fixed benchmark, but independent review found that its new test exercised forced exact fallback rather than the changed approximate route. Four paired randomized cases changed by only `4.2004866e-10` in aggregate and no case reached the minimum effect. The candidate was not promoted; the version-2 evaluator now rejects holdout-insensitive changes and case-level regressions.
 - An agent could optimize the public benchmark; the post-hoc randomized holdout reduces accidental overfitting but is not secure against a deliberately evasive candidate.
 - An agent can modify allowed production code and tests. Scope enforcement, immutable root evaluator, claim hashes, and review agents raise the bar but do not replace external review.
 - Autonomous repositories accumulate duplicated patterns and benchmark-specific hacks. The pipeline includes drift scans and cleanup hypotheses, but long-term architectural entropy remains an open risk.
 - `--auto-promote` is opt-in. Publication, release signing, and deployment must remain separately authorized.
 
-## H. Security and privacy
+## H. Release integrity
+
+`RELEASE_MANIFEST.json` and `SHA256SUMS` in the repository describe the retained 2026-07-14 `0.2.0` source ZIP snapshot, not the `0.2.1` candidate. They are intentionally not regenerated under the old identity. Separate inspection of the locally retained pre-publication `0.2.0` **Python sdist** found two excluded `.safetensors` checkpoint payloads, most plausibly carried through stale setuptools source metadata. That sdist is quarantined and must not be uploaded.
+
+For `0.2.1`, the source-ZIP builder still reads only Git-tracked regular files, rejects missing/link/submodule/path-escape entries, requires a clean tracked tree, applies the same case-insensitive weight-suffix policy, verifies the generated ZIP member set, and records the exact HEAD commit. Python packaging exports that clean Git HEAD into an isolated workspace directory before building, then runs a fail-closed verifier over the artifact paths, both wheel and sdist members, metadata version, required package payload, archive paths, and links. The final builder fetches `origin/main` and refuses to run unless `HEAD` is the checked-out `main` commit and exactly matches it; a pre-merge build must identify itself as a candidate. The manifest records the source commit plus verified wheel/sdist filenames, byte sizes, and SHA-256 values without local absolute paths. CI runs the package check. These controls reduce accidental local-file disclosure but do not prove absence of every possible secret, provide a signature, or provide a trusted timestamp.
+
+## I. Security and privacy
 
 Exact archives may contain secrets, personal data, or copyrighted context. No encryption-at-rest, retention policy, redaction, tenant isolation, or secure deletion is included. Tool outputs and benchmark files are untrusted input. Running arbitrary external backends requires OS-level sandboxing beyond Python validation.
 
-## I. Claims that are prohibited
+## J. Claims that are prohibited
 
 The current artifacts do not support claims of:
 

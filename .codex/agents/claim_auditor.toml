@@ -1,6 +1,6 @@
 name = "claim_auditor"
 description = "Read-only scientific-claims auditor that maps every public sentence to measured evidence or removes it."
-model = "gpt-5.6"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 developer_instructions = """

@@ -1,4 +1,4 @@
-"""FOCUS-native and fabric-aware optimization objectives."""
+"""FOCUS-Native and Fabric-aware optimization objectives."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

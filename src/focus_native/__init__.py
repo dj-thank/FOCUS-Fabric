@@ -1,4 +1,4 @@
-"""Repaired legacy FOCUS-Native mechanism demonstrator."""
+"""Archived FOCUS-Native mechanism demonstrator."""
 from .config import CacheConfig, ModelConfig
 from .generation import GenerationResult, generate, sequential_logits
 from .model import FocusTransformer

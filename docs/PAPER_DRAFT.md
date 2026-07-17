@@ -2,6 +2,8 @@
 
 **Public research draft — 2026-07-14**
 
+**Project creator:** [dj-thank](https://github.com/dj-thank)
+
 ## Abstract
 
 Long-context decoder inference is commonly treated as a uniform key–value (KV)
@@ -94,7 +96,7 @@ merge-friendly when many diffuse contributions live in a low-dimensional
 subspace. Rare identifiers and high-leverage facts may instead require sparse
 exact residuals.
 
-The release therefore treats FOCUS operators as one codec, not as a universal
+The release therefore treats FOCUS-Native operators as one codec, not as a universal
 replacement for KV. The compiler preserves all candidate metrics and Pareto
 status, so a chosen representation can be audited rather than inferred from an
 opaque policy.
@@ -199,7 +201,7 @@ compressed-prefix student are optimized jointly:
 +\lambda_r E_{\text{route-distance}}.
 \]
 
-The supplied function backpropagates through the legacy differentiable FOCUS
+The supplied function backpropagates through the differentiable FOCUS-Native
 path. The archived checkpoint predates the complete heterogeneous controller,
 so no claim is made that it was trained with this full objective.
 
@@ -241,8 +243,9 @@ The repository contains a Codex control plane with the following invariants:
    comparison.
 6. Only after the agent finishes does the trusted root generate a randomized
    holdout seed and evaluate root and candidate on identical cases.
-7. Promotion requires exactness constraints, no randomized holdout regression,
-   and a minimum public-evidence improvement; auto-promotion is opt-in.
+7. Promotion requires exactness constraints, paired case-level and aggregate
+   holdout non-regression, a measurable randomized-holdout effect, and a
+   minimum public-evidence improvement; auto-promotion is opt-in.
 8. Events are hash chained and quantitative prose is backed by JSON Pointer,
    artifact SHA-256, and permitted wording.
 
@@ -285,8 +288,8 @@ response; the failed value is documented but excluded from accepted claims.
 ### 10.3 Learned checkpoint traces
 
 On actual Q/K/V projections from the repaired symbolic checkpoint, layer 0
-future-trace NMSE is 1.61037e-04 for Fabric and 3.44849e-04 for legacy learned
-FOCUS. At layer 3, legacy FOCUS is better unguarded: 2.18333e-05 versus
+future-trace NMSE is 1.61037e-04 for Fabric and 3.44849e-04 for the FOCUS-Native
+operator. At layer 3, the FOCUS-Native operator is better unguarded: 2.18333e-05 versus
 1.39396e-04. This counterexample is retained because the portfolio is not
 expected to dominate every local field. Exact guarding reduces layer-3 Fabric
 error at the cost of archive reads.
@@ -321,8 +324,9 @@ not measure agent task success or reasoning.
 - Fallback can dominate cold-memory traffic.
 - The CPU compiler is expensive and not a serving implementation.
 - The semantic hash chain is not an authenticated signature.
-- The Codex pipeline was dry-run in this container because the Codex executable
-  was absent; execute mode is supplied but not falsely marked as exercised.
+- A later local Windows Codex cycle exercised execute mode through all declared
+  gates. Its candidate was not promoted: independent review found the paired
+  holdout insensitive, and the strengthened policy rejects that result.
 - The architecture has not established superior general intelligence, official
   benchmark leadership, production speedup, or million-token correctness.
 

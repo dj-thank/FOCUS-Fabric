@@ -2,7 +2,7 @@
 
 ## Thesis
 
-The earlier prototype assumed that old attention could be represented by one family of query-conditioned local operators. The literature and our randomized falsification both reject that universal assumption. The revised thesis is:
+The initial single-family prototype assumed that old attention could be represented by one family of query-conditioned local operators. The literature and our randomized falsification both reject that universal assumption. The revised thesis is:
 
 > Long-context intelligence needs a **portfolio of reversible memory representations**, selected by measured future-query behavior, guarded by an exact source of truth, and paired with a separately typed semantic control plane for agent commitments and provenance.
 

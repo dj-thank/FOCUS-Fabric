@@ -1,6 +1,6 @@
 name = "kernel_engineer"
 description = "GPU/Triton systems engineer for shape-specialized heterogeneous-cache kernels and truthful profiling."
-model = "gpt-5.6"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """

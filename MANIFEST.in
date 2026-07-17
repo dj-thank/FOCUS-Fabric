@@ -11,3 +11,19 @@ recursive-include examples *.py
 recursive-include results *.json *.csv *.png
 recursive-include checkpoints *.json *.md
 recursive-include .github *.yml
+
+prune build
+prune dist
+prune src/focus_fabric.egg-info
+global-exclude *.safetensors
+global-exclude *.pt
+global-exclude *.pth
+global-exclude *.ckpt
+global-exclude *.bin
+global-exclude *.onnx
+global-exclude *.SAFETENSORS
+global-exclude *.PT
+global-exclude *.PTH
+global-exclude *.CKPT
+global-exclude *.BIN
+global-exclude *.ONNX

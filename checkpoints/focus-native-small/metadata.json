@@ -1,7 +1,7 @@
 {
-  "stage": "legacy-mechanism-demonstrator",
+  "stage": "archived-mechanism-demonstrator",
   "parameters": 1006976,
-  "provenance": "Repaired from the earlier FOCUS-Native prototype export in this project.",
+  "provenance": "Restored from an archived FOCUS-Native mechanism export in this project.",
   "intended_use": "Numerical Q/K/V trace and cache-mechanism experiments only.",
   "tokenizer_status": "The original symbolic tokenizer was absent; textual capability claims are prohibited."
 }

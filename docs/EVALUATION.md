@@ -38,7 +38,7 @@ Certificate coverage is 0.9688 in distribution and 0.8073 under shift. The latte
 The retained suite contains three independently seeded runs totaling 11 controlled attention cases. `results/randomized_holdout_suite.json` is a deterministic aggregation of the three raw artifacts. All three runs passed the safety condition, the worst run-level Fabric-to-best-single-family NMSE ratio was 0.098802554956204, forced exact fallback had maximum absolute error 0.0, and no invalid outputs occurred. The suite is a mechanism stress test only; it cannot substitute for natural-language or official long-context benchmarks.
 
 
-The trusted evaluator chooses cases after an autonomous code change. It compares root and candidate source on the same seed and verifies forced exact fallback. The committed self-test reports:
+The trusted evaluator chooses cases after an autonomous code change. It compares root and candidate source on the same seed and verifies forced exact fallback. Version 2 additionally binds schema, seed, case count, per-case identity/objective, aggregate objective, a 2% aggregate and per-case non-regression ceiling, and a minimum measurable effect in at least one case. This prevents a candidate that changes only the fixed public benchmark from passing an insensitive holdout. The committed release self-test reports:
 
 - mean Fabric NMSE: 3.15046594e-05;
 - mean best memory-matched single-family NMSE: 0.000353266912;
@@ -52,12 +52,12 @@ The historical pre-fix value is documented but not placed in the accepted claim 
 
 The trace cache consists of 128 tokens/head with 64 future test queries. It is not an official language benchmark.
 
-| Layer | Active compression | Fabric future NMSE | Legacy learned FOCUS NMSE | Guarded future NMSE | Guarded fallback |
+| Layer | Active compression | Fabric future NMSE | FOCUS-Native operator NMSE | Guarded future NMSE | Guarded fallback |
 |---:|---:|---:|---:|---:|---:|
 | 0 | 13.114× | 0.000161036529 | 0.00034484925 | 7.03984697e-05 | 0.042 |
 | 3 | 12.629× | 0.00013939575 | 2.1833268e-05 | 6.95370836e-05 | 0.052 |
 
-Layer 3 is an important counterexample: unguarded legacy FOCUS is more accurate than the selected Fabric approximation. The portfolio is not guaranteed to dominate every head/layer. Guarding reduces error by reading exact state.
+Layer 3 is an important counterexample: the unguarded FOCUS-Native operator is more accurate than the selected Fabric approximation. The portfolio is not guaranteed to dominate every head/layer. Guarding reduces error by reading exact state.
 
 ## Repeated compaction
 
@@ -88,7 +88,7 @@ Required release matrix for a production claim:
 - BABILong by task, context size, and supporting-fact count;
 - long-form generation with token agreement and semantic grading;
 - long tool-use/CoT with task success, policy retention, evidence accuracy, and compaction count;
-- full KV, sliding window, strongest eviction/quantization baselines, legacy FOCUS, and Fabric;
+- full KV, sliding window, strongest eviction/quantization baselines, the FOCUS-Native operator, and Fabric;
 - at least three seeds or confidence intervals;
 - GPU p50/p95, prefill/decode split, archive I/O, and Nsight physical counters.
 

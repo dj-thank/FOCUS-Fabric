@@ -124,19 +124,22 @@ def evaluate(seed: int, cases: int) -> dict[str, Any]:
             head.tolerance = tolerance
 
         full_bytes = int(2 * case.keys.numel() * compiler.dtype_bytes)
+        active_ratio = page.active_bytes() / full_bytes
+        fabric_nmse = fabric_metrics["output_nmse"]
         results.append(
             {
                 "case": index,
                 "seed": case_seed,
                 "tokens": tokens,
                 "dimension": dimension,
-                "fabric_nmse": fabric_metrics["output_nmse"],
+                "fabric_nmse": fabric_nmse,
                 "operator_nmse": operator_metrics["output_nmse"],
                 "coreset_nmse": coreset_metrics["output_nmse"],
                 "best_baseline_nmse": min(
                     operator_metrics["output_nmse"], coreset_metrics["output_nmse"]
                 ),
-                "active_ratio": page.active_bytes() / full_bytes,
+                "active_ratio": active_ratio,
+                "objective": fabric_nmse + 0.04 * active_ratio,
                 "fallback_max_abs_error": fallback_max_error,
                 "invalid_outputs": stats.invalid_codec_outputs,
                 "selected_codecs": [head.codec.name for head in page.heads],
@@ -145,7 +148,7 @@ def evaluate(seed: int, cases: int) -> dict[str, Any]:
     mean_fabric = sum(item["fabric_nmse"] for item in results) / len(results)
     mean_baseline = sum(item["best_baseline_nmse"] for item in results) / len(results)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "seed": seed,
         "cases": cases,
         "mean_fabric_nmse": mean_fabric,
@@ -154,7 +157,7 @@ def evaluate(seed: int, cases: int) -> dict[str, Any]:
         "max_fallback_abs_error": max(item["fallback_max_abs_error"] for item in results),
         "invalid_outputs": sum(item["invalid_outputs"] for item in results),
         "mean_active_ratio": sum(item["active_ratio"] for item in results) / len(results),
-        "objective": mean_fabric + 0.04 * (sum(item["active_ratio"] for item in results) / len(results)),
+        "objective": sum(item["objective"] for item in results) / len(results),
         "single_family_reference": {
             "mean_best_nmse": mean_baseline,
             "fabric_to_best_ratio": mean_fabric / max(mean_baseline, 1e-12),

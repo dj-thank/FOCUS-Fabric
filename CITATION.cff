@@ -2,9 +2,11 @@ cff-version: 1.2.0
 message: "If you use FOCUS-Fabric, cite this software release and the primary papers listed in references/literature_2026-07.json."
 title: "FOCUS-Fabric 2026.07: Heterogeneous Uncertainty-Gated Memory for Transformer KV State"
 type: software
-version: 0.2.0
-date-released: 2026-07-14
+version: 0.2.1
+date-released: 2026-07-17
 license: Apache-2.0
 authors:
+  - name: "dj-thank"
   - name: "FOCUS-Fabric research release contributors"
+repository-code: "https://github.com/dj-thank/FOCUS-Fabric"
 abstract: "A research implementation of heterogeneous attention-memory codecs, exact fallback, repeated compaction, semantic agent memory, verified generation, and an autonomous Codex experimentation harness."
